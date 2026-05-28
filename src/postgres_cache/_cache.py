@@ -1,0 +1,274 @@
+"""
+Public cache facade for postgres-cache.
+
+Spec: _reversa_sdd/migration/target_architecture.md § BC-1, DA-03, DA-04, DA-10
+      _reversa_sdd/migration/target_domain_model.md § Comandos, PostgresCache
+      _reversa_sdd/migration/target_business_rules.md § BR-MIGRAR-001, BR-MIGRAR-003,
+                                                         BR-MIGRAR-005, BR-MIGRAR-012
+      _reversa_sdd/migration/risk_register.md § RISK-003, RISK-004
+
+⚠️ RISK-003: The background scanner thread MUST be stopped gracefully.
+             __del__ is unreliable in Python. Always use PostgresCache as a
+             context manager, or call close() explicitly:
+
+               with PostgresCache(options) as cache:
+                   cache.set("key", b"value")
+
+             OR:
+
+               cache = PostgresCache(options)
+               try:
+                   cache.set("key", b"value")
+               finally:
+                   cache.close()
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from datetime import datetime, timezone
+from typing import Callable
+
+from ._db import DatabaseOperations
+from ._options import EntryOptions, PostgresCacheOptions
+from ._sql import SqlQueries
+
+logger = logging.getLogger(__name__)  # DA-07 / BR-MIGRAR-011
+
+#: Maximum allowed key length — BR-MIGRAR-012
+_MAX_KEY_LENGTH: int = 449
+
+
+class PostgresCache:
+    """Distributed cache backed by PostgreSQL.
+
+    Main public interface. Instantiate directly (no DI required):
+
+        options = PostgresCacheOptions(
+            dsn="postgresql://user:pass@localhost/db",
+            schema="public",
+            table="cache",
+            create_if_not_exists=True,
+        )
+
+        with PostgresCache(options) as cache:
+            cache.set("key", b"value")
+            data = cache.get("key")   # bytes | None
+
+    The background expiration scanner is started on __enter__ and stopped
+    gracefully on __exit__ / close(). Using PostgresCache outside a context
+    manager is allowed but requires an explicit cache.close() call.
+
+    Spec: target_architecture.md § BC-1 (Cache Facade)
+          target_domain_model.md § Comandos
+    """
+
+    def __init__(self, options: PostgresCacheOptions) -> None:
+        """
+        Args:
+            options: Validated PostgresCacheOptions. Use PostgresCacheOptions(...)
+                     to build and validate configuration before passing here.
+        """
+        self._options = options
+        self._sql = SqlQueries(
+            schema=options.schema,
+            table=options.table,
+            use_wal=options.use_wal,
+        )
+        self._db = DatabaseOperations(options=options, sql=self._sql)
+
+        # Scanner thread state — BR-MIGRAR-005, DA-03
+        self._stop_event: threading.Event = threading.Event()
+        self._scanner_thread: threading.Thread | None = None
+
+    # ------------------------------------------------------------------
+    # Context manager — RISK-003, DA-04
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> "PostgresCache":
+        """Start the background expiration scanner and return self.
+
+        ⚠️ RISK-003: Required to guarantee the scanner thread is stopped.
+        """
+        self._start_scanner()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Stop the background scanner gracefully."""
+        self.close()
+        return None  # do not suppress exceptions
+
+    def close(self) -> None:
+        """Stop the background expiration scanner thread gracefully.
+
+        Signals the scanner to stop and waits for it to terminate (up to 5 s).
+        Safe to call multiple times.
+
+        Spec: target_domain_model.md § Comandos § close
+              RISK-003 — __del__ is not reliable; always call close() or use
+              the context manager.
+        """
+        self._stop_event.set()
+        if self._scanner_thread is not None and self._scanner_thread.is_alive():
+            self._scanner_thread.join(timeout=5.0)
+            if self._scanner_thread.is_alive():
+                logger.warning(
+                    "Scanner thread did not stop within 5 seconds."
+                )
+        self._scanner_thread = None
+
+    # ------------------------------------------------------------------
+    # Scanner thread — BR-MIGRAR-005, DA-03
+    # ------------------------------------------------------------------
+
+    def _start_scanner(self) -> None:
+        """Start the background expiration scanner daemon thread.
+
+        Only starts when options.enable_expiration_scan is True.
+        No-op if the thread is already running.
+        """
+        if not self._options.enable_expiration_scan:
+            logger.debug("Expiration scanner is disabled (enable_expiration_scan=False).")
+            return
+        if self._scanner_thread is not None and self._scanner_thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._scanner_thread = threading.Thread(
+            target=self._scanner_loop,
+            name="postgres-cache-scanner",
+            daemon=True,  # DA-03: daemon=True ensures thread dies with process
+        )
+        self._scanner_thread.start()
+        logger.debug("Expiration scanner started (interval=%s).", self._options.expiration_scan_interval)
+
+    def _scanner_loop(self) -> None:
+        """Background loop: delete expired entries at the configured interval.
+
+        Uses threading.Event.wait() instead of time.sleep() so that close()
+        can interrupt the sleep immediately.
+
+        Spec: target_domain_model.md § Comandos (scanner implicit behavior)
+              BR-MIGRAR-005
+        """
+        interval_seconds = self._options.expiration_scan_interval.total_seconds()
+        while not self._stop_event.wait(timeout=interval_seconds):
+            try:
+                count = self._db.delete_expired()
+                if count > 0:
+                    logger.debug("Scanner deleted %d expired entries.", count)
+            except Exception:
+                logger.exception(
+                    "Expiration scanner encountered an error. "
+                    "Continuing — next scan in %s.",
+                    self._options.expiration_scan_interval,
+                )
+
+    # ------------------------------------------------------------------
+    # Key validation — BR-MIGRAR-012
+    # ------------------------------------------------------------------
+
+    def _validate_key(self, key: str) -> None:
+        """Reject keys longer than 449 characters.
+
+        Spec: target_domain_model.md § CacheEntry invariants
+              BR-MIGRAR-012: key ≤ 449 chars.
+
+        Raises:
+            ValueError: If the key exceeds _MAX_KEY_LENGTH characters.
+        """
+        if not key:
+            raise ValueError("Cache key must not be empty.")
+        if len(key) > _MAX_KEY_LENGTH:
+            raise ValueError(
+                f"Cache key exceeds maximum length of {_MAX_KEY_LENGTH} characters "
+                f"(got {len(key)}). — BR-MIGRAR-012"
+            )
+
+    # ------------------------------------------------------------------
+    # Public API — BR-MIGRAR-003
+    # ------------------------------------------------------------------
+
+    def get(self, key: str) -> bytes | None:
+        """Retrieve a cached value by key.
+
+        Renews sliding expiration atomically in the database on each read
+        (BR-MIGRAR-009). Returns None if the key is absent or expired.
+
+        RISK-004: all timestamps computed as tz-aware UTC inside _db.get().
+
+        Args:
+            key: Cache key (≤ 449 characters).
+
+        Returns:
+            Cached bytes, or None on miss / expiry.
+        """
+        self._validate_key(key)
+        return self._db.get(key)
+
+    def set(
+        self,
+        key: str,
+        value: bytes,
+        options: EntryOptions | None = None,
+    ) -> None:
+        """Store a value in the cache (insert or update).
+
+        Uses an atomic UPSERT via CTE ON CONFLICT (BR-MIGRAR-007).
+
+        Args:
+            key:     Cache key (≤ 449 characters).
+            value:   Bytes to store. Not interpreted by the library.
+            options: Per-entry TTL options. When None, default sliding
+                     expiration from PostgresCacheOptions is applied.
+        """
+        self._validate_key(key)
+        self._db.set(key, value, options)
+
+    def refresh(self, key: str) -> None:
+        """Renew the sliding expiration of an entry without returning its value.
+
+        No-op if the entry is expired or absent.
+
+        Args:
+            key: Cache key (≤ 449 characters).
+        """
+        self._validate_key(key)
+        self._db.refresh(key)
+
+    def remove(self, key: str) -> None:
+        """Physically delete a cache entry by key.
+
+        Args:
+            key: Cache key (≤ 449 characters).
+        """
+        self._validate_key(key)
+        self._db.remove(key)
+
+    def get_or_create(
+        self,
+        key: str,
+        factory: Callable[[], bytes],
+        options: EntryOptions | None = None,
+    ) -> bytes:
+        """Retrieve a cached value, or compute and store it if absent.
+
+        Protected against cache stampede via PostgreSQL advisory lock
+        (BR-MIGRAR-002, DA-10). Only one concurrent caller executes
+        ``factory`` for a given key — all others wait and then receive
+        the result.
+
+        ⚠️ RISK-006: Advisory lock requires an explicit transaction.
+                     Handled internally by DatabaseOperations.get_or_create().
+
+        Args:
+            key:     Cache key (≤ 449 characters).
+            factory: Zero-argument callable returning the bytes to cache.
+                     Called at most once per key across concurrent callers.
+            options: Per-entry TTL options applied when storing the result.
+
+        Returns:
+            Cached or freshly computed bytes.
+        """
+        self._validate_key(key)
+        return self._db.get_or_create(key, factory, options)
