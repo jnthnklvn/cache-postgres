@@ -307,6 +307,73 @@ class AsyncDatabaseOperations:
                 raise
 
     # ------------------------------------------------------------------
+    # incr / lock
+    # ------------------------------------------------------------------
+
+    async def incr(self, key: str, value: int = 1) -> int:
+        """Atomic counter increment."""
+        await self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            self._sql.increment_item, 
+                            (key, value, utc_now, value, utc_now)
+                        )
+                        row = await cur.fetchone()
+                return int(row[0]) if row else value
+            except Exception:
+                logger.exception("async incr(%r) failed.", key)
+                raise
+
+    async def set_lock(self, key: str, value: bytes, expire: datetime) -> bool:
+        """Atomically acquire a lock."""
+        await self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            self._sql.set_lock_item,
+                            (key, value, expire, utc_now)
+                        )
+                        return cur.rowcount > 0
+            except Exception:
+                logger.exception("async set_lock(%r) failed.", key)
+                raise
+
+    async def unlock(self, key: str, value: bytes) -> bool:
+        """Atomically release a lock."""
+        await self.ensure_table_exists()
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(self._sql.unlock_item, (key, value))
+                        return cur.rowcount > 0
+            except Exception:
+                logger.exception("async unlock(%r) failed.", key)
+                raise
+
+    async def is_locked(self, key: str) -> bool:
+        """Check if a lock is currently held."""
+        await self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(self._sql.is_locked_item, (key, utc_now))
+                        row = await cur.fetchone()
+                        return row is not None
+            except Exception:
+                logger.exception("async is_locked(%r) failed.", key)
+                raise
+
+    # ------------------------------------------------------------------
     # Pattern Matching
     # ------------------------------------------------------------------
 

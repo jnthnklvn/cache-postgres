@@ -201,6 +201,58 @@ class TestBulkOperations:
 
 
 # ===========================================================================
+# Distributed Primitives
+# ===========================================================================
+
+class TestDistributedPrimitives:
+    @pytest.mark.anyio
+    async def test_incr_delegates_to_db(self):
+        cache, mock_db = make_cache()
+        mock_db.incr.return_value = 5
+        assert await cache.incr("counter", 2) == 5
+        mock_db.incr.assert_called_once_with("counter", 2)
+
+    @pytest.mark.anyio
+    async def test_set_lock_delegates_to_db(self):
+        cache, mock_db = make_cache()
+        mock_db.set_lock.return_value = True
+        assert await cache.set_lock("lock", "owner", "30s") is True
+        mock_db.set_lock.assert_called_once()
+        assert mock_db.set_lock.call_args[0][0] == "lock"
+        assert mock_db.set_lock.call_args[0][1] == b"owner"
+
+    @pytest.mark.anyio
+    async def test_unlock_delegates_to_db(self):
+        cache, mock_db = make_cache()
+        mock_db.unlock.return_value = True
+        assert await cache.unlock("lock", "owner") is True
+        mock_db.unlock.assert_called_once_with("lock", b"owner")
+
+    @pytest.mark.anyio
+    async def test_is_locked_polls(self):
+        cache, mock_db = make_cache()
+        mock_db.is_locked.side_effect = [True, False]
+        
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            assert await cache.is_locked("lock", wait=1.0, step=0.1) is False
+            mock_sleep.assert_called_once_with(0.1)
+            assert mock_db.is_locked.call_count == 2
+
+    @pytest.mark.anyio
+    async def test_lock_context_manager(self):
+        cache, mock_db = make_cache()
+        mock_db.set_lock.side_effect = [False, True]
+        
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            async with cache.lock("mylock", "10s"):
+                pass
+            
+            mock_sleep.assert_called_once_with(0.1)
+            assert mock_db.set_lock.call_count == 2
+            mock_db.unlock.assert_called_once()
+            assert mock_db.unlock.call_args[0][0] == "mylock"
+
+# ===========================================================================
 # Pattern Matching
 # ===========================================================================
 

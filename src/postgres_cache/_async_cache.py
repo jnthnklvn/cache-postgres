@@ -168,6 +168,66 @@ class AsyncPostgresCache:
         self._validate_key(key)
         await self._db.remove(key)
 
+    # ------------------------------------------------------------------
+    # Distributed Primitives (Counters & Locks)
+    # ------------------------------------------------------------------
+
+    async def incr(self, key: str, value: int = 1) -> int:
+        """Atomically increment a counter."""
+        self._validate_key(key)
+        return await self._db.incr(key, value)
+
+    async def is_locked(self, key: str, wait: float = 0, step: float = 0.5) -> bool:
+        """Check if a lock is currently held, optionally polling until timeout."""
+        self._validate_key(key)
+        import asyncio
+        import time
+        start = time.time()
+        while True:
+            if not await self._db.is_locked(key):
+                return False
+            if wait <= 0 or (time.time() - start) >= wait:
+                return True
+            await asyncio.sleep(step)
+
+    async def set_lock(self, key: str, value: str, expire: str | timedelta) -> bool:
+        """Atomically acquire a lock."""
+        self._validate_key(key)
+        from datetime import datetime, timezone
+        from ._utils import parse_duration
+        
+        utc_now = datetime.now(tz=timezone.utc)
+        if isinstance(expire, str):
+            delta = parse_duration(expire)
+            expires_at = utc_now + delta
+        else:
+            expires_at = utc_now + expire
+            
+        return await self._db.set_lock(key, value.encode('utf-8'), expires_at)
+
+    async def unlock(self, key: str, value: str) -> bool:
+        """Atomically release a lock held by the specified token."""
+        self._validate_key(key)
+        return await self._db.unlock(key, value.encode('utf-8'))
+
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def lock(self, key: str, expire: str | timedelta = "30s"):
+        """Context manager for distributed locking."""
+        import uuid
+        import asyncio
+        token = str(uuid.uuid4())
+        
+        # Poll until we acquire the lock
+        while not await self.set_lock(key, token, expire):
+            await asyncio.sleep(0.1)
+            
+        try:
+            yield
+        finally:
+            await self.unlock(key, token)
+
     async def delete_tags(self, *tags: str) -> None:
         """Physically delete all cache entries that contain all of the specified tags."""
         if tags:

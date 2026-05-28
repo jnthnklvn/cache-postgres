@@ -213,6 +213,64 @@ class SqlQueries:
         )
 
         # ------------------------------------------------------------------
+        # increment_item
+        #
+        # Atomic counter increment. Converts string to integer, increments,
+        # and converts back to string bytes. 
+        # Params: (key, value, utcNow, value, utcNow)
+        # ------------------------------------------------------------------
+        self.increment_item: str = (
+            f"INSERT INTO {qualified} ({COL_ID}, {COL_VALUE}, {COL_EXPIRES_AT})"
+            f" VALUES (%s, %s::text::bytea, 'infinity')"
+            f" ON CONFLICT ({COL_ID}) DO UPDATE"
+            f" SET {COL_VALUE} = CASE"
+            f"         WHEN {qualified}.{COL_EXPIRES_AT} < %s THEN %s::text::bytea"
+            f"         ELSE (COALESCE(convert_from({qualified}.{COL_VALUE}, 'UTF8')::bigint, 0) + %s)::text::bytea"
+            f"     END,"
+            f"     {COL_EXPIRES_AT} = CASE"
+            f"         WHEN {qualified}.{COL_EXPIRES_AT} < %s THEN 'infinity'::timestamptz"
+            f"         ELSE {qualified}.{COL_EXPIRES_AT}"
+            f"     END"
+            f" RETURNING convert_from({COL_VALUE}, 'UTF8')::bigint;"
+        )
+
+        # ------------------------------------------------------------------
+        # set_lock_item
+        #
+        # Atomic lock acquisition using INSERT ON CONFLICT DO UPDATE.
+        # Params: (key, lock_id, expires_at, now)
+        # ------------------------------------------------------------------
+        self.set_lock_item: str = (
+            f"INSERT INTO {qualified} ({COL_ID}, {COL_VALUE}, {COL_EXPIRES_AT})"
+            f" VALUES (%s, %s::bytea, %s)"
+            f" ON CONFLICT ({COL_ID}) DO UPDATE"
+            f" SET {COL_VALUE} = EXCLUDED.{COL_VALUE},"
+            f"     {COL_EXPIRES_AT} = EXCLUDED.{COL_EXPIRES_AT}"
+            f" WHERE {qualified}.{COL_EXPIRES_AT} < %s"
+            f" RETURNING {COL_ID};"
+        )
+
+        # ------------------------------------------------------------------
+        # unlock_item
+        #
+        # Atomic lock release using DELETE WHERE value matches.
+        # Params: (key, lock_id)
+        # ------------------------------------------------------------------
+        self.unlock_item: str = (
+            f"DELETE FROM {qualified} WHERE {COL_ID} = %s AND {COL_VALUE} = %s::bytea;"
+        )
+
+        # ------------------------------------------------------------------
+        # is_locked_item
+        #
+        # Checks if a key has an active lock.
+        # Params: (key, now)
+        # ------------------------------------------------------------------
+        self.is_locked_item: str = (
+            f"SELECT 1 FROM {qualified} WHERE {COL_ID} = %s AND {COL_EXPIRES_AT} >= %s;"
+        )
+
+        # ------------------------------------------------------------------
         # advisory_lock — BR-MIGRAR-002 (stampede protection)
         #
         # Must run inside an explicit transaction (conn.autocommit = False).

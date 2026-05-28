@@ -212,6 +212,88 @@ class DatabaseOperations:
     # set — BR-MIGRAR-003, BR-MIGRAR-007
     # ------------------------------------------------------------------
 
+    def incr(self, key: str, value: int = 1) -> int:
+        """Atomic counter increment.
+        
+        Args:
+            key: Cache key.
+            value: Integer value to increment by.
+            
+        Returns:
+            The new incremented value.
+        """
+        self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            self._sql.increment_item, 
+                            (key, value, utc_now, value, utc_now)
+                        )
+                        row = cur.fetchone()
+                return int(row[0]) if row else value
+            except Exception:
+                logger.exception("incr(%r) failed.", key)
+                raise
+
+    def set_lock(self, key: str, value: bytes, expire: datetime) -> bool:
+        """Atomically acquire a lock.
+        
+        Returns:
+            True if the lock was acquired, False otherwise.
+        """
+        self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            self._sql.set_lock_item,
+                            (key, value, expire, utc_now)
+                        )
+                        return cur.rowcount > 0
+            except Exception:
+                logger.exception("set_lock(%r) failed.", key)
+                raise
+
+    def unlock(self, key: str, value: bytes) -> bool:
+        """Atomically release a lock.
+        
+        Returns:
+            True if the lock was released, False if it was already released or held by another owner.
+        """
+        self.ensure_table_exists()
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.unlock_item, (key, value))
+                        return cur.rowcount > 0
+            except Exception:
+                logger.exception("unlock(%r) failed.", key)
+                raise
+
+    def is_locked(self, key: str) -> bool:
+        """Check if a lock is currently held.
+        
+        Returns:
+            True if locked, False otherwise.
+        """
+        self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.is_locked_item, (key, utc_now))
+                        return cur.fetchone() is not None
+            except Exception:
+                logger.exception("is_locked(%r) failed.", key)
+                raise
+
     def set(
         self,
         key: str,

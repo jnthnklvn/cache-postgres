@@ -251,6 +251,107 @@ class PostgresCache:
         self._validate_key(key)
         self._db.remove(key)
 
+    # ------------------------------------------------------------------
+    # Distributed Primitives (Counters & Locks)
+    # ------------------------------------------------------------------
+
+    def incr(self, key: str, value: int = 1) -> int:
+        """Atomically increment a counter.
+        
+        Args:
+            key: Cache key.
+            value: Amount to increment (default 1).
+            
+        Returns:
+            The new incremented value.
+        """
+        self._validate_key(key)
+        return self._db.incr(key, value)
+
+    def is_locked(self, key: str, wait: float = 0, step: float = 0.5) -> bool:
+        """Check if a lock is currently held, optionally polling until timeout.
+        
+        Args:
+            key: Lock key.
+            wait: Max time in seconds to wait for the lock to become available.
+            step: Sleep interval in seconds between polls.
+            
+        Returns:
+            True if locked, False if unlocked.
+        """
+        self._validate_key(key)
+        import time
+        start = time.time()
+        while True:
+            if not self._db.is_locked(key):
+                return False
+            if wait <= 0 or (time.time() - start) >= wait:
+                return True
+            time.sleep(step)
+
+    def set_lock(self, key: str, value: str, expire: str | timedelta) -> bool:
+        """Atomically acquire a lock.
+        
+        Args:
+            key: Lock key.
+            value: Lock owner token.
+            expire: Lock duration.
+            
+        Returns:
+            True if acquired, False if already held.
+        """
+        self._validate_key(key)
+        from datetime import datetime, timezone
+        from ._utils import parse_duration
+        
+        utc_now = datetime.now(tz=timezone.utc)
+        if isinstance(expire, str):
+            delta = parse_duration(expire)
+            expires_at = utc_now + delta
+        else:
+            expires_at = utc_now + expire
+            
+        return self._db.set_lock(key, value.encode('utf-8'), expires_at)
+
+    def unlock(self, key: str, value: str) -> bool:
+        """Atomically release a lock held by the specified token.
+        
+        Args:
+            key: Lock key.
+            value: Lock owner token.
+            
+        Returns:
+            True if released, False if not held by this token.
+        """
+        self._validate_key(key)
+        return self._db.unlock(key, value.encode('utf-8'))
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def lock(self, key: str, expire: str | timedelta = "30s"):
+        """Context manager for distributed locking.
+        
+        Blocks indefinitely until the lock is acquired. Automatically releases
+        the lock when exiting the context block.
+        
+        Args:
+            key: Lock key.
+            expire: Max duration to hold the lock (auto-release).
+        """
+        import uuid
+        import time
+        token = str(uuid.uuid4())
+        
+        # Poll until we acquire the lock
+        while not self.set_lock(key, token, expire):
+            time.sleep(0.1)
+            
+        try:
+            yield
+        finally:
+            self.unlock(key, token)
+
     def delete_tags(self, *tags: str) -> None:
         """Physically delete all cache entries that contain all of the specified tags.
 

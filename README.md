@@ -157,14 +157,53 @@ def get_expensive_data(id: int) -> dict:
 Emulate Redis-like wildcard operations using standard SQL `LIKE` syntax natively.
 
 ```python
-# Returns a dictionary of all matched keys
-results = cache.get_pattern("user:%")
+# Create multiple entries
+cache.set_many({
+    "user:1": b"Alice",
+    "user:2": b"Bob",
+    "admin:1": b"Charlie"
+})
 
-# Deletes all matched keys and returns the number of deleted items
-deleted_count = cache.delete_pattern("session:%")
+# Get all matching
+users = cache.get_pattern("user:%")  # {"user:1": b"Alice", "user:2": b"Bob"}
+
+# Delete all matching
+deleted_count = cache.delete_pattern("user:%") # 2
 ```
 
-## Connection modes
+## Distributed Primitives (Locks & Counters)
+
+Postgres-Cache provides synchronization mechanisms directly built into Postgres, without requiring Redis or ZooKeeper.
+
+### Atomic Counters
+
+Increment a value atomically without race conditions.
+> [!IMPORTANT]
+> The database stores the raw integer bytes via UTF-8 serialization. If you call `cache.get("site_hits")` directly, you will receive bytes (e.g. `b'42'`). Use `int(cache.get("site_hits").decode('utf-8'))` if you need the integer form.
+
+```python
+# Returns 1 (initializes key if it doesn't exist)
+hits = cache.incr("site_hits")
+
+# Increment by 5
+hits = cache.incr("site_hits", 5)  # Returns 6
+```
+
+### Distributed Locks
+
+Coordinate tasks horizontally across processes via an atomic, distributed context manager. 
+The lock requires a time-to-live to ensure no deadlocks occur if a worker crashes.
+
+```python
+with cache.lock("expensive_background_job", expire="30s"):
+    # Guaranteed exclusive access!
+    # If another process arrives, it will block until this completes or expires.
+    process_data()
+```
+
+You can also use lower-level methods directly: `cache.set_lock`, `cache.unlock`, `cache.is_locked`.
+
+## Thread Safety / Async Safety
 
 ```python
 # Mode 1: DSN string (library creates and manages a ConnectionPool internally)
