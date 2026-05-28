@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Callable
+from typing import Callable, Awaitable
 
 from ._utils import parse_duration
 
@@ -69,7 +69,7 @@ class PostgresCacheOptions:
     The library does **not** call ``close()`` on returned connections.
     """
 
-    async_connection_factory: Callable[[], object] | None = None
+    async_connection_factory: Callable[[], Awaitable[object]] | None = None
     """Callable returning an awaitable psycopg.AsyncConnection.
     Used exclusively by AsyncPostgresCache.
     """
