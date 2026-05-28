@@ -4,8 +4,9 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/cache-postgres.svg?color=blue)](https://pypi.org/project/cache-postgres/)
 [![Supported Python Versions](https://img.shields.io/pypi/pyversions/cache-postgres.svg)](https://pypi.org/project/cache-postgres/)
-[![License](https://img.shields.io/github/license/jnthnklvn/cache-postgres.svg?color=green)](https://github.com/jnthnklvn/cache-postgres/blob/main/LICENSE)
-[![Tests Status](https://img.shields.io/github/actions/workflow/status/jnthnklvn/cache-postgres/tests.yml?branch=main&label=tests)](https://github.com/jnthnklvn/cache-postgres/actions)
+[![License](https://img.shields.io/github/license/jnthnklvn/cache-postgres.svg?color=green)](https://github.com/jnthnklvn/cache-postgres/blob/master/LICENSE)
+[![Tests Status](https://img.shields.io/github/actions/workflow/status/jnthnklvn/cache-postgres/tests.yml?branch=master&label=tests)](https://github.com/jnthnklvn/cache-postgres/actions)
+[![Coverage](https://raw.githubusercontent.com/jnthnklvn/cache-postgres/master/.github/badges/coverage.svg)](https://github.com/jnthnklvn/cache-postgres/actions)
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 ---

@@ -671,3 +671,140 @@ class TestDataParity:
             t.join()
 
         assert not errors, f"Concurrent operations raised: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Sync Advanced Features (Bulk, Pattern, Tags, Counters, Locks, Decorators)
+# ---------------------------------------------------------------------------
+
+class TestSyncAdvancedFeatures:
+    """Integration tests for synchronous bulk, pattern, tag, counters, locks, and decorators."""
+
+    def test_bulk_operations(self, cache: PostgresCache):
+        """set_many, get_many, and delete_many execute correctly."""
+        k1, k2 = unique_key("bulk-1"), unique_key("bulk-2")
+        mapping = {k1: b"data-1", k2: b"data-2"}
+
+        cache.set_many(mapping, EntryOptions(sliding_expiration=timedelta(minutes=5)))
+        
+        # Test get_many
+        results = cache.get_many([k1, k2, "non-existent"])
+        assert results == {k1: b"data-1", k2: b"data-2"}
+
+        # Test delete_many
+        cache.delete_many([k1, k2])
+        assert cache.get(k1) is None
+        assert cache.get(k2) is None
+
+    def test_pattern_matching(self, cache: PostgresCache):
+        """get_pattern and delete_pattern execute SQL LIKE matches."""
+        prefix = unique_key("pat")
+        k1 = f"{prefix}:1"
+        k2 = f"{prefix}:2"
+        other = unique_key("other")
+
+        cache.set(k1, b"val-1")
+        cache.set(k2, b"val-2")
+        cache.set(other, b"val-other")
+
+        # Match pattern
+        results = cache.get_pattern(f"{prefix}:%")
+        assert results == {k1: b"val-1", k2: b"val-2"}
+
+        # Delete pattern
+        deleted = cache.delete_pattern(f"{prefix}:%")
+        assert deleted == 2
+        assert cache.get(k1) is None
+        assert cache.get(k2) is None
+        assert cache.get(other) == b"val-other"
+
+    def test_tag_invalidation(self, cache: PostgresCache):
+        """delete_tags physically removes entries matching specified tags."""
+        k1 = unique_key("tag-1")
+        k2 = unique_key("tag-2")
+        k3 = unique_key("tag-3")
+
+        cache.set(k1, b"t1", EntryOptions(tags=["red", "blue"]))
+        cache.set(k2, b"t2", EntryOptions(tags=["blue"]))
+        cache.set(k3, b"t3", EntryOptions(tags=["green"]))
+
+        # Delete tags
+        cache.delete_tags("blue")
+        assert cache.get(k1) is None
+        assert cache.get(k2) is None
+        assert cache.get(k3) == b"t3"
+
+    def test_atomic_counters(self, cache: PostgresCache):
+        """incr atomically increments integer values in the database."""
+        k = unique_key("counter")
+        assert cache.incr(k, 1) == 1
+        assert cache.incr(k, 5) == 6
+        assert cache.incr(k, -2) == 4
+
+    def test_distributed_locks(self, cache: PostgresCache):
+        """set_lock, unlock, and is_locked context managers function correctly."""
+        k = unique_key("lock")
+        token1 = "owner-1"
+        token2 = "owner-2"
+
+        # Acquire lock
+        assert cache.set_lock(k, token1, timedelta(seconds=10)) is True
+        assert cache.is_locked(k) is True
+
+        # Conflicting acquire fails
+        assert cache.set_lock(k, token2, timedelta(seconds=10)) is False
+
+        # Unlock with wrong token fails
+        assert cache.unlock(k, token2) is False
+        assert cache.is_locked(k) is True
+
+        # Unlock with correct token succeeds
+        assert cache.unlock(k, token1) is True
+        assert cache.is_locked(k) is False
+
+        # Context manager lock block
+        with cache.lock(k, timedelta(seconds=5)):
+            assert cache.is_locked(k) is True
+        assert cache.is_locked(k) is False
+
+    def test_decorators(self, cache: PostgresCache):
+        """cached, failover, and early decorators wrap calls correctly."""
+        k_cached = unique_key("dec-cached")
+        k_fail = unique_key("dec-fail")
+        k_early = unique_key("dec-early")
+
+        # 1. Test @cached
+        call_count_cached = {"n": 0}
+
+        @cache.cached(key=k_cached, ttl="5m")
+        def fn_cached(x: int) -> int:
+            call_count_cached["n"] += 1
+            return x * 2
+
+        assert fn_cached(10) == 20
+        assert fn_cached(10) == 20
+        assert call_count_cached["n"] == 1  # cached
+
+        # 2. Test @failover
+        call_count_fail = {"n": 0}
+
+        @cache.failover(key=k_fail, ttl=timedelta(seconds=1), exceptions=(RuntimeError,))
+        def fn_fail(x: int) -> str:
+            call_count_fail["n"] += 1
+            if call_count_fail["n"] == 2:
+                raise RuntimeError("Service offline")
+            return f"ok-{x}"
+
+        assert fn_fail(100) == "ok-100"  # Populates cache
+        time.sleep(2)  # Wait for cache to expire, triggering the fallback on the next call
+        # Next call triggers exception, should fall back to stale cache
+        assert fn_fail(100) == "ok-100"
+        assert call_count_fail["n"] == 2
+
+        # 3. Test @early
+        @cache.early(key=k_early, ttl="10m", early_ttl="7m")
+        def fn_early(x: int) -> int:
+            return x + 1
+
+        assert fn_early(5) == 6
+
