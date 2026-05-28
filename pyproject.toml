@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cache-postgres"
 version = "0.1.0"
-description = "Distributed cache over PostgreSQL with stampede protection via advisory locks"
+description = "Distributed cache over PostgreSQL with stampede protection"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

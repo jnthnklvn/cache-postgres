@@ -26,8 +26,6 @@ Example::
 
         # stampede-safe get-or-create (advisory lock)
         result = cache.get_or_create("key", lambda: b"expensive-value")
-
-Spec: _reversa_sdd/migration/topology_decision.md § Implicações para a Fase 2
 """
 
 from ._cache import PostgresCache

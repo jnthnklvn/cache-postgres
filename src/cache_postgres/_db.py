@@ -1,17 +1,12 @@
 """
 Database access layer for cache-postgres.
 
-Spec: _reversa_sdd/migration/target_architecture.md § BC-2, DA-01, DA-05, DA-06, DA-07
-      _reversa_sdd/migration/target_domain_model.md § DatabaseOperations
-      _reversa_sdd/migration/target_business_rules.md § BR-MIGRAR-001 to BR-MIGRAR-019
-      _reversa_sdd/migration/risk_register.md § RISK-003, RISK-004, RISK-006
-
 Critical invariants enforced here:
-  - RISK-004: ALL datetimes use datetime.now(tz=timezone.utc) — NEVER naive.
-  - RISK-006: pg_advisory_xact_lock MUST run inside an explicit transaction
-              (conn.autocommit = False before the call).
-  - BR-MIGRAR-006: DDL executed at most once per instance (double-checked locking
-                   via threading.Lock + _table_created flag).
+  - All datetimes use datetime.now(tz=timezone.utc) — NEVER naive.
+  - pg_advisory_xact_lock MUST run inside an explicit transaction
+    (conn.autocommit = False before the call).
+  - DDL executed at most once per instance (double-checked locking
+    via threading.Lock + _table_created flag).
 """
 
 from __future__ import annotations
@@ -28,17 +23,14 @@ from psycopg_pool import ConnectionPool
 from ._options import EntryOptions, PostgresCacheOptions
 from ._sql import SqlQueries
 
-logger = logging.getLogger(__name__)  # DA-07 / BR-MIGRAR-011
+logger = logging.getLogger(__name__)
 
 
 class DatabaseOperations:
-    """All direct interactions with PostgreSQL via psycopg2.
+    """All direct interactions with PostgreSQL via psycopg.
 
     Instantiated internally by PostgresCache — never by library consumers.
     Manages connections, DDL, CRUD, advisory lock, and expiration scan.
-
-    Spec: target_architecture.md § DA-01 (no DI injection)
-          target_domain_model.md § Comandos
     """
 
     def __init__(self, options: PostgresCacheOptions, sql: SqlQueries) -> None:
@@ -50,11 +42,11 @@ class DatabaseOperations:
         self._options = options
         self._sql = sql
 
-        # Double-checked locking for DDL — BR-MIGRAR-006
+        # Double-checked locking for DDL
         self._table_created: bool = False
         self._ddl_lock: threading.Lock = threading.Lock()
 
-        # Connection Pool (BR-MIGRAR-010)
+        # Connection Pool
         self._pool: ConnectionPool | None = None
         if self._options.connection_factory is None and self._options.dsn:
             self._pool = ConnectionPool(
@@ -70,7 +62,7 @@ class DatabaseOperations:
             self._pool.close()
 
     # ------------------------------------------------------------------
-    # Connection management — BR-MIGRAR-010
+    # Connection management
     # ------------------------------------------------------------------
 
     @contextmanager
@@ -90,17 +82,15 @@ class DatabaseOperations:
             finally:
                 pass  # Do not close factory connections
 
-
-
     # ------------------------------------------------------------------
-    # DDL — BR-MIGRAR-006 (double-checked locking)
+    # DDL (double-checked locking)
     # ------------------------------------------------------------------
 
     def ensure_table_exists(self) -> None:
         """Create the cache table and index if they do not exist yet.
 
         Uses double-checked locking so DDL is attempted at most once per
-        instance, even under concurrent calls — BR-MIGRAR-006.
+        instance, even under concurrent calls.
 
         Only runs when options.create_if_not_exists is True.
         """
@@ -134,17 +124,15 @@ class DatabaseOperations:
                     raise
 
     # ------------------------------------------------------------------
-    # get — BR-MIGRAR-003, BR-MIGRAR-009
+    # get
     # ------------------------------------------------------------------
 
     def get(self, key: str) -> bytes | None:
         """Retrieve a cache value by key, renewing sliding expiration atomically.
 
-        Returns None if the key does not exist or has expired (BR-MIGRAR-004).
+        Returns None if the key does not exist or has expired.
         Sliding expiration is recalculated in-database in the same UPDATE
-        statement (BR-MIGRAR-009, single round-trip).
-
-        RISK-004: utcNow is always datetime.now(tz=timezone.utc).
+        statement (single round-trip).
 
         Args:
             key: Cache key (≤ 449 characters).
@@ -153,7 +141,7 @@ class DatabaseOperations:
             Cached bytes, or None on miss / expiry.
         """
         self.ensure_table_exists()
-        utc_now = datetime.now(tz=timezone.utc)  # RISK-004
+        utc_now = datetime.now(tz=timezone.utc)
 
         with self._get_connection() as conn:
             try:
@@ -207,10 +195,6 @@ class DatabaseOperations:
             except Exception:
                 logger.exception("get_with_ttl(%r) failed.", key)
                 raise
-
-    # ------------------------------------------------------------------
-    # set — BR-MIGRAR-003, BR-MIGRAR-007
-    # ------------------------------------------------------------------
 
     def incr(self, key: str, value: int = 1) -> int:
         """Atomic counter increment.
@@ -302,10 +286,8 @@ class DatabaseOperations:
     ) -> None:
         """Insert or update a cache entry (UPSERT via CTE ON CONFLICT).
 
-        Computes expiration timestamps at call time using UTC now.
-
-        RISK-004: ALL timestamps are tz-aware UTC.
-        BR-MIGRAR-007: UPSERT is atomic via CTE with ON CONFLICT DO UPDATE.
+        Computes expiration timestamps at call time using UTC now. All
+        timestamps are timezone-aware UTC.
 
         Args:
             key:     Cache key.
@@ -314,7 +296,7 @@ class DatabaseOperations:
                      expiration from PostgresCacheOptions is applied.
         """
         self.ensure_table_exists()
-        utc_now = datetime.now(tz=timezone.utc)  # RISK-004
+        utc_now = datetime.now(tz=timezone.utc)
 
         if options is None:
             options = EntryOptions(
@@ -349,22 +331,16 @@ class DatabaseOperations:
                 logger.exception("set(%r) failed.", key)
                 raise
 
-    # ------------------------------------------------------------------
-    # refresh — BR-MIGRAR-003, BR-MIGRAR-009
-    # ------------------------------------------------------------------
-
     def refresh(self, key: str) -> None:
         """Renew the sliding expiration of a cache entry without returning its value.
 
         If the entry is expired or absent, this is a no-op.
 
-        RISK-004: utcNow is always tz-aware UTC.
-
         Args:
             key: Cache key.
         """
         self.ensure_table_exists()
-        utc_now = datetime.now(tz=timezone.utc)  # RISK-004
+        utc_now = datetime.now(tz=timezone.utc)
 
         with self._get_connection() as conn:
             try:
@@ -374,10 +350,6 @@ class DatabaseOperations:
             except Exception:
                 logger.exception("refresh(%r) failed.", key)
                 raise
-
-    # ------------------------------------------------------------------
-    # remove — BR-MIGRAR-003
-    # ------------------------------------------------------------------
 
     def remove(self, key: str) -> None:
         """Physically delete a cache entry by key.
@@ -394,10 +366,6 @@ class DatabaseOperations:
             except Exception:
                 logger.exception("remove(%r) failed.", key)
                 raise
-
-    # ------------------------------------------------------------------
-    # delete_by_tags
-    # ------------------------------------------------------------------
 
     def delete_by_tags(self, tags: list[str]) -> None:
         """Physically delete all cache entries that contain the specified tags.
@@ -527,7 +495,7 @@ class DatabaseOperations:
                 raise
 
     # ------------------------------------------------------------------
-    # delete_expired — BR-MIGRAR-018 (background scanner)
+    # Expiration Cleanup
     # ------------------------------------------------------------------
 
     def delete_expired(self) -> int:
@@ -535,13 +503,11 @@ class DatabaseOperations:
 
         Called by the background scanner thread in PostgresCache.
 
-        RISK-004: utcNow is always tz-aware UTC.
-
         Returns:
             Number of rows deleted.
         """
         self.ensure_table_exists()
-        utc_now = datetime.now(tz=timezone.utc)  # RISK-004
+        utc_now = datetime.now(tz=timezone.utc)
         with self._get_connection() as conn:
             try:
                 with conn.transaction():
@@ -556,7 +522,7 @@ class DatabaseOperations:
                 raise
 
     # ------------------------------------------------------------------
-    # get_or_create — BR-MIGRAR-002 (stampede protection via advisory lock)
+    # get_or_create (stampede protection via advisory lock)
     # ------------------------------------------------------------------
 
     def get_or_create(
@@ -570,16 +536,14 @@ class DatabaseOperations:
         Uses pg_advisory_xact_lock to prevent cache stampede: only one
         concurrent caller executes the factory for a given key.
 
-        ⚠️ RISK-006: conn.autocommit MUST be False before pg_advisory_xact_lock.
-                     The lock is transactional — it releases on COMMIT/ROLLBACK.
-        ⚠️ RISK-004: All timestamps are tz-aware UTC.
+        The lock is transactional — it releases on COMMIT/ROLLBACK.
+        All timestamps are tz-aware UTC.
 
         Implementation pattern:
-          1. Open connection, disable autocommit (RISK-006).
-          2. Acquire advisory lock on hash(key).
-          3. Double-check: re-read after lock (another worker may have set it).
-          4. If still miss: call factory(), write result, return it.
-          5. Commit (releases advisory lock).
+          1. Open connection, acquire transactional advisory lock on hash(key).
+          2. Double-check: re-read after lock (another worker may have set it).
+          3. If still miss: call factory(), write result, return it.
+          4. Commit (releases advisory lock).
 
         Args:
             key:     Cache key.
@@ -590,7 +554,7 @@ class DatabaseOperations:
             The cached or freshly computed bytes value.
         """
         self.ensure_table_exists()
-        utc_now = datetime.now(tz=timezone.utc)  # RISK-004
+        utc_now = datetime.now(tz=timezone.utc)
 
         with self._get_connection() as conn:
             try:
@@ -612,7 +576,6 @@ class DatabaseOperations:
 
                     # Step 4: store the computed value
                     with conn.cursor() as cur:
-                        # Pass explicit sliding/absolute values as done in set()
                         options = options or EntryOptions(
                             sliding_expiration=self._options.default_sliding_expiration
                         )

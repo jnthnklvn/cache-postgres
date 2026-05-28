@@ -5,7 +5,7 @@ Unit tests for AsyncPostgresCache (_async_cache.py).
 import asyncio
 import pytest
 from datetime import timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from cache_postgres._async_cache import AsyncPostgresCache, _MAX_KEY_LENGTH
 from cache_postgres._options import EntryOptions, PostgresCacheOptions

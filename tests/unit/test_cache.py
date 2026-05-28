@@ -3,10 +3,6 @@ Unit tests for PostgresCache (_cache.py).
 
 Mocks DatabaseOperations to test the public facade, key validation,
 scanner thread lifecycle, and context manager — without a real database.
-
-Spec: _reversa_sdd/migration/target_architecture.md § BC-1, DA-03, DA-04
-      _reversa_sdd/migration/target_business_rules.md § BR-MIGRAR-001, BR-MIGRAR-005, BR-MIGRAR-012
-      _reversa_sdd/migration/risk_register.md § RISK-003
 """
 
 import time
@@ -45,7 +41,7 @@ def make_cache(options: PostgresCacheOptions | None = None) -> tuple[PostgresCac
 
 
 # ===========================================================================
-# Key validation — BR-MIGRAR-012
+# Key validation
 # ===========================================================================
 
 class TestKeyValidation:
@@ -64,7 +60,7 @@ class TestKeyValidation:
     def test_key_over_max_length_raises(self):
         cache, _ = make_cache()
         key = "x" * (_MAX_KEY_LENGTH + 1)
-        with pytest.raises(ValueError, match="BR-MIGRAR-012"):
+        with pytest.raises(ValueError, match="exceeds maximum length"):
             cache.get(key)
 
     def test_key_validation_applies_to_all_operations(self):
@@ -300,6 +296,7 @@ class TestDistributedPrimitives:
             mock_db.unlock.assert_called_once()
             assert mock_db.unlock.call_args[0][0] == "mylock"
 
+
 # ===========================================================================
 # Pattern Matching
 # ===========================================================================
@@ -326,7 +323,7 @@ class TestPatternMatching:
 
 
 # ===========================================================================
-# Context manager — RISK-003, DA-04
+# Context manager
 # ===========================================================================
 
 class TestContextManager:
@@ -363,7 +360,7 @@ class TestContextManager:
 
 
 # ===========================================================================
-# Scanner thread — BR-MIGRAR-005, DA-03, RISK-003
+# Scanner thread
 # ===========================================================================
 
 class TestScannerThread:
@@ -398,7 +395,7 @@ class TestScannerThread:
         cache._db = MagicMock()
         cache.__enter__()
         try:
-            assert cache._scanner_thread.daemon is True  # DA-03
+            assert cache._scanner_thread.daemon is True
         finally:
             cache.close()
 
@@ -431,7 +428,6 @@ class TestScannerThread:
         cache._db = mock_db
 
         # Override the interval to something fast, bypassing construction validation.
-        # object.__setattr__ skips __post_init__ (dataclasses are mutable by default).
         object.__setattr__(
             cache._options,
             "expiration_scan_interval",
@@ -447,7 +443,7 @@ class TestScannerThread:
         )
 
     def test_scanner_continues_after_error(self):
-        """Scanner must not crash the thread on a transient error — BR-MIGRAR-011."""
+        """Scanner must not crash the thread on a transient error."""
         opts = make_options(
             enable_expiration_scan=True,
             expiration_scan_interval=timedelta(minutes=5),  # valid for construction

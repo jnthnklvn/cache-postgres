@@ -48,6 +48,8 @@
 
 With native support for both **synchronous** and **asynchronous** paradigms, it is suitable for any modern Python web application (e.g., FastAPI, Django, Flask, Sanic).
 
+This project is based on [Microsoft.Extensions.Caching.Postgres](https://github.com/Azure/Microsoft.Extensions.Caching.Postgres), with specifications extracted using [Reversa](https://github.com/sandeco/reversa), and draws inspiration from [Cashews](https://github.com/Krukov/cashews/).
+
 ---
 
 ## Why cache-postgres?

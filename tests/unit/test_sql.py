@@ -3,9 +3,6 @@ Unit tests for SqlQueries (_sql.py).
 
 These tests verify SQL string generation without any database connection.
 All assertions are on the generated strings themselves.
-
-Spec: _reversa_sdd/migration/target_architecture.md § BC-2
-      _reversa_sdd/migration/target_data_model.md § SQL das operações principais
 """
 
 import pytest
@@ -37,7 +34,7 @@ def sql_custom() -> SqlQueries:
 
 
 # ---------------------------------------------------------------------------
-# _delimit_identifier (bug-for-bug no-op — BR-MIGRAR-013)
+# _delimit_identifier
 # ---------------------------------------------------------------------------
 
 
@@ -133,7 +130,7 @@ class TestCreateIndex:
 
 
 # ---------------------------------------------------------------------------
-# get_item — BR-MIGRAR-009 (UPDATE + RETURNING with sliding expiration)
+# get_item (UPDATE + RETURNING with sliding expiration)
 # ---------------------------------------------------------------------------
 
 
@@ -160,7 +157,7 @@ class TestGetItem:
 
 
 # ---------------------------------------------------------------------------
-# set_item — BR-MIGRAR-007 (UPSERT via CTE ON CONFLICT)
+# set_item (UPSERT via CTE ON CONFLICT)
 # ---------------------------------------------------------------------------
 
 
@@ -188,7 +185,7 @@ class TestSetItem:
 
 
 # ---------------------------------------------------------------------------
-# refresh_item — BR-MIGRAR-009 (sliding, no RETURNING)
+# refresh_item (sliding, no RETURNING)
 # ---------------------------------------------------------------------------
 
 
@@ -211,7 +208,7 @@ class TestRefreshItem:
 
 
 # ---------------------------------------------------------------------------
-# remove_item — BR-MIGRAR-003
+# remove_item
 # ---------------------------------------------------------------------------
 
 
@@ -227,7 +224,7 @@ class TestRemoveItem:
 
 
 # ---------------------------------------------------------------------------
-# delete_expired — BR-MIGRAR-018 (background scanner batch)
+# delete_expired (background scanner batch)
 # ---------------------------------------------------------------------------
 
 
@@ -246,7 +243,7 @@ class TestDeleteExpired:
 
 
 # ---------------------------------------------------------------------------
-# advisory_lock — BR-MIGRAR-002 (stampede protection)
+# advisory_lock (stampede protection)
 # ---------------------------------------------------------------------------
 
 

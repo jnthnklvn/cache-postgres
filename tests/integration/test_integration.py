@@ -8,21 +8,6 @@ Set the environment variable PGCACHE_TEST_DSN before running:
     python -m pytest tests/integration/test_integration.py -v
 
 All tests are skipped if PGCACHE_TEST_DSN is not set.
-
-Each test group is derived from one of the 10 Gherkin parity specs:
-  PAR-01  Get and Set (basic happy path)
-  PAR-02  Expiration (absolute and sliding)
-  PAR-03  Stampede protection (get_or_create + advisory lock)
-  PAR-04  Background expiration scanner
-  PAR-05  DDL auto-create
-  PAR-06  Refresh (sliding renewal without returning value)
-  PAR-07  Remove (physical delete)
-  PAR-08  Connection modes (DSN and factory)
-  PAR-09  Key validation (max 449 chars)
-  PAR-10  Data parity (timezone, NULL mapping)
-
-Spec: _reversa_sdd/migration/parity_specs.md
-      _reversa_sdd/migration/cutover_plan.md § Critérios de Go/No-Go
 """
 
 import os
@@ -98,13 +83,11 @@ def raw_query(dsn: str, sql: str, params: tuple = ()) -> list:
 
 
 # ---------------------------------------------------------------------------
-# PAR-01 — Get and Set (basic happy path)
-# Tags: @paridade @critico
-# BRs: BR-003, BR-015
+# Get and Set (basic happy path)
 # ---------------------------------------------------------------------------
 
 class TestGetSetBasic:
-    """PAR-01: Basic get/set parity — happy path scenarios."""
+    """Basic get/set parity — happy path scenarios."""
 
     def test_set_and_get_roundtrip(self, cache: PostgresCache):
         """Set stores bytes; get returns identical bytes."""
@@ -141,13 +124,11 @@ class TestGetSetBasic:
 
 
 # ---------------------------------------------------------------------------
-# PAR-02 — Expiration (absolute and sliding)
-# Tags: @paridade @critico
-# BRs: BR-004, BR-009
+# Expiration (absolute and sliding)
 # ---------------------------------------------------------------------------
 
 class TestExpiration:
-    """PAR-02: Expiration parity — absolute and sliding."""
+    """Expiration parity — absolute and sliding."""
 
     def test_absolute_expiration_expires(self, cache: PostgresCache):
         """Item with absolute_expiration_relative=1s is gone after 2s."""
@@ -180,7 +161,7 @@ class TestExpiration:
         assert cache.get(key) == b"alive"   # now at ~6s total but last touch was 3s ago
 
     def test_sliding_capped_by_absolute(self, cache: PostgresCache):
-        """Sliding expiration must not exceed absoluteExpiration — BR-009."""
+        """Sliding expiration must not exceed absoluteExpiration."""
         key = unique_key("par02-sliding-cap")
         cache.set(key, b"capped", EntryOptions(
             sliding_expiration=timedelta(seconds=10),
@@ -216,13 +197,11 @@ class TestExpiration:
 
 
 # ---------------------------------------------------------------------------
-# PAR-03 — Stampede protection (get_or_create + advisory lock)
-# Tags: @paridade @critico @concorrencia
-# BRs: BR-002
+# Stampede protection (get_or_create + advisory lock)
 # ---------------------------------------------------------------------------
 
 class TestStampedeProtection:
-    """PAR-03: get_or_create with advisory lock — RISK-006."""
+    """get_or_create with advisory lock."""
 
     def test_factory_called_exactly_once_under_concurrency(
         self, cache: PostgresCache
@@ -289,13 +268,11 @@ class TestStampedeProtection:
 
 
 # ---------------------------------------------------------------------------
-# PAR-04 — Background expiration scanner
-# Tags: @paridade @critico @thread-safety
-# BRs: BR-001, BR-005, BR-018
+# Background expiration scanner
 # ---------------------------------------------------------------------------
 
 class TestScannerBackground:
-    """PAR-04: Background scanner deletes expired entries."""
+    """Background scanner deletes expired entries."""
 
     def test_scanner_deletes_expired_entries(self, base_options: PostgresCacheOptions):
         """Scanner runs at configured interval and removes expired rows."""
@@ -329,7 +306,7 @@ class TestScannerBackground:
         assert count == 0, f"Expected row deleted by scanner, but it still exists (count={count})"
 
     def test_scanner_thread_stops_on_context_exit(self, base_options: PostgresCacheOptions):
-        """Thread must not survive after __exit__ — RISK-003."""
+        """Thread must not survive after __exit__."""
         opts = PostgresCacheOptions(
             dsn=base_options.dsn,
             schema=base_options.schema,
@@ -352,18 +329,16 @@ class TestScannerBackground:
 
 
 # ---------------------------------------------------------------------------
-# PAR-05 — DDL auto-create
-# Tags: @paridade
-# BRs: BR-006, BR-017, BR-019
+# DDL auto-create
 # ---------------------------------------------------------------------------
 
 class TestDdlAutoCreate:
-    """PAR-05: create_if_not_exists creates table with correct schema."""
+    """create_if_not_exists creates table with correct schema."""
 
     def test_table_created_with_correct_columns(
         self, base_options: PostgresCacheOptions, dsn: str
     ):
-        """After first use, the table must have all required columns — BR-008."""
+        """After first use, the table must have all required columns."""
         # ensure table exists (cache fixture already triggers this)
         with PostgresCache(base_options):
             pass
@@ -393,7 +368,7 @@ class TestDdlAutoCreate:
     def test_index_on_expiresattime_exists(
         self, base_options: PostgresCacheOptions, dsn: str
     ):
-        """Index ix_expiresattime must exist — BR-019."""
+        """Index ix_expiresattime must exist."""
         with PostgresCache(base_options):
             pass
 
@@ -405,17 +380,15 @@ class TestDdlAutoCreate:
             """,
             (base_options.schema, base_options.table),
         )
-        assert rows, "Index ix_expiresattime not found — BR-019 violation"
+        assert rows, "Index ix_expiresattime not found"
 
 
 # ---------------------------------------------------------------------------
-# PAR-06 — Refresh (sliding renewal)
-# Tags: @paridade
-# BRs: BR-009
+# Refresh (sliding renewal)
 # ---------------------------------------------------------------------------
 
 class TestRefresh:
-    """PAR-06: refresh renews sliding expiration without returning value."""
+    """refresh renews sliding expiration without returning value."""
 
     def test_refresh_extends_lifetime(self, cache: PostgresCache):
         """refresh prevents expiry of an item that would expire soon."""
@@ -469,13 +442,11 @@ class TestRefresh:
 
 
 # ---------------------------------------------------------------------------
-# PAR-07 — Remove (physical delete)
-# Tags: @paridade
-# BRs: BR-003
+# Remove (physical delete)
 # ---------------------------------------------------------------------------
 
 class TestRemove:
-    """PAR-07: remove physically deletes the row."""
+    """remove physically deletes the row."""
 
     def test_remove_deletes_row(
         self, cache: PostgresCache, base_options: PostgresCacheOptions, dsn: str
@@ -515,13 +486,11 @@ class TestRemove:
 
 
 # ---------------------------------------------------------------------------
-# PAR-08 — Connection modes (DSN and factory)
-# Tags: @paridade
-# BRs: BR-010
+# Connection modes (DSN and factory)
 # ---------------------------------------------------------------------------
 
 class TestConnectionModes:
-    """PAR-08: DSN mode and connection_factory mode."""
+    """DSN mode and connection_factory mode."""
 
     def test_dsn_mode_set_get(self, base_options: PostgresCacheOptions):
         """DSN mode: library manages connections and operations succeed."""
@@ -559,19 +528,17 @@ class TestConnectionModes:
         )
 
     def test_no_dsn_no_factory_raises_on_construction(self):
-        """Neither dsn nor connection_factory → ValueError — BR-010."""
+        """Neither dsn nor connection_factory raises ValueError."""
         with pytest.raises(ValueError):
             PostgresCacheOptions()  # no dsn, no factory
 
 
 # ---------------------------------------------------------------------------
-# PAR-09 — Key validation (max 449 chars)
-# Tags: @paridade
-# BRs: BR-012
+# Key validation (max 449 chars)
 # ---------------------------------------------------------------------------
 
 class TestKeyValidation:
-    """PAR-09: key validation rules — max 449 characters."""
+    """key validation rules — max 449 characters."""
 
     def test_key_at_max_length_accepted(self, cache: PostgresCache):
         """Exactly 449 chars is accepted."""
@@ -582,7 +549,7 @@ class TestKeyValidation:
     def test_key_over_max_length_raises(self, cache: PostgresCache):
         """450 chars raises ValueError before touching the DB."""
         key = "a" * 450
-        with pytest.raises(ValueError, match="BR-MIGRAR-012"):
+        with pytest.raises(ValueError, match="exceeds maximum length"):
             cache.set(key, b"x")
 
     def test_empty_key_raises(self, cache: PostgresCache):
@@ -603,18 +570,16 @@ class TestKeyValidation:
 
 
 # ---------------------------------------------------------------------------
-# PAR-10 — Data parity (timezone, NULL mapping, shared schema)
-# Tags: @paridade @data-parity
-# BRs: BR-008, BR-015, BR-016
+# Data parity (timezone, NULL mapping, shared schema)
 # ---------------------------------------------------------------------------
 
 class TestDataParity:
-    """PAR-10: Data parity — timezone integrity and NULL column mapping."""
+    """Data parity — timezone integrity and NULL column mapping."""
 
     def test_expiresattime_is_timezone_aware_in_db(
         self, cache: PostgresCache, base_options: PostgresCacheOptions, dsn: str
     ):
-        """RISK-004: expiresattime persisted to DB must be TIMESTAMPTZ (tz-aware)."""
+        """expiresattime persisted to DB must be TIMESTAMPTZ (tz-aware)."""
         key = unique_key("par10-tz")
         cache.set(key, b"tz-test", EntryOptions(
             sliding_expiration=timedelta(minutes=10)

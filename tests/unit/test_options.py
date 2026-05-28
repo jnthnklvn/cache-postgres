@@ -2,10 +2,6 @@
 Unit tests for PostgresCacheOptions and EntryOptions (_options.py).
 
 These tests verify validation logic without any database connection.
-
-Spec: _reversa_sdd/migration/target_domain_model.md § PostgresCacheOptions, EntryOptions
-      _reversa_sdd/migration/target_business_rules.md § BR-MIGRAR-001, BR-MIGRAR-010
-      _reversa_sdd/migration/risk_register.md § RISK-004
 """
 
 import pytest
@@ -92,12 +88,12 @@ class TestPostgresCacheOptionsInvalid:
     """Invalid construction cases — all must raise ValueError."""
 
     def test_no_connection_raises(self):
-        """BR-MIGRAR-010: one of dsn or connection_factory is required."""
+        """One of dsn or connection_factory is required."""
         with pytest.raises(ValueError, match="dsn.*connection_factory"):
             PostgresCacheOptions()
 
     def test_both_dsn_and_factory_raises(self):
-        """BR-MIGRAR-010: providing both is ambiguous."""
+        """Providing both is ambiguous."""
         with pytest.raises(ValueError, match="exactly one"):
             PostgresCacheOptions(
                 dsn="postgresql://localhost/db",
@@ -117,15 +113,15 @@ class TestPostgresCacheOptionsInvalid:
             PostgresCacheOptions(dsn="postgresql://localhost/db", table="")
 
     def test_scan_interval_below_minimum_raises(self):
-        """BR-MIGRAR-001: scan interval must be >= 5 minutes."""
-        with pytest.raises(ValueError, match="BR-MIGRAR-001"):
+        """Scan interval must be >= 5 minutes."""
+        with pytest.raises(ValueError, match="expiration_scan_interval"):
             PostgresCacheOptions(
                 dsn="postgresql://localhost/db",
                 expiration_scan_interval=timedelta(minutes=4, seconds=59),
             )
 
     def test_scan_interval_zero_raises(self):
-        with pytest.raises(ValueError, match="BR-MIGRAR-001"):
+        with pytest.raises(ValueError, match="expiration_scan_interval"):
             PostgresCacheOptions(
                 dsn="postgresql://localhost/db",
                 expiration_scan_interval=timedelta(0),
@@ -196,8 +192,8 @@ class TestEntryOptionsInvalid:
             )
 
     def test_naive_absolute_expiration_raises(self):
-        """RISK-004: naive datetimes must be rejected."""
-        with pytest.raises(ValueError, match="RISK-004"):
+        """Naive datetimes must be rejected."""
+        with pytest.raises(ValueError, match="timezone-aware"):
             EntryOptions(absolute_expiration=datetime(2030, 1, 1))  # no tzinfo
 
 
@@ -217,19 +213,18 @@ class TestEntryOptionsResolveExpiresAt:
 
     def test_relative_expiration_added_to_now(self):
         opts = EntryOptions(absolute_expiration_relative=timedelta(hours=1))
-        result = opts.resolve_expires_at(now=self._NOW)
-        assert result == self._NOW + timedelta(hours=1)
+        assert opts.resolve_expires_at(now=self._NOW) == self._NOW + timedelta(hours=1)
 
     def test_no_expiration_returns_none(self):
         opts = EntryOptions()
         assert opts.resolve_expires_at(now=self._NOW) is None
 
     def test_defaults_to_utc_now_when_no_now_arg(self):
-        """resolve_expires_at() without 'now' uses datetime.now(tz=utc) — RISK-004."""
+        """resolve_expires_at() without 'now' uses datetime.now(tz=utc)."""
         opts = EntryOptions(absolute_expiration_relative=timedelta(seconds=30))
         result = opts.resolve_expires_at()
         assert result is not None
-        assert result.tzinfo is not None  # tz-aware — RISK-004
+        assert result.tzinfo is not None  # tz-aware
 
 
 class TestEntryOptionsSlidingSeconds:
