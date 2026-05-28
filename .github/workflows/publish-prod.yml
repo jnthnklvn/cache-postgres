@@ -1,9 +1,8 @@
-name: Publish to Test PyPI
+name: Publish to PyPI (Production)
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
   workflow_dispatch:
 
 env:
@@ -13,24 +12,13 @@ jobs:
   build:
     name: Build distribution
     runs-on: ubuntu-latest
-    # Restrict manual dispatch to dev or master branches
+    # Restrict to master branch releases or manual dispatch on master branch
     if: >-
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && (github.ref_name == 'master' || github.ref_name == 'dev'))
+      (github.event_name == 'release' && (github.event.release.target_commitish == 'master' || github.event.release.target_commitish == 'refs/heads/master')) ||
+      (github.event_name == 'workflow_dispatch' && github.ref_name == 'master')
 
     steps:
     - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0 # Fetch all history to check branch ancestry
-
-    - name: Verify tag is on master or dev branch
-      if: github.event_name == 'push'
-      run: |
-        COMMIT_SHA=$(git rev-parse HEAD)
-        git branch -r --contains $COMMIT_SHA | grep -E 'origin/(master|dev)$' || {
-          echo "Error: Tag must be pushed from a commit on 'master' or 'dev' branch."
-          exit 1
-        }
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -51,14 +39,14 @@ jobs:
         name: python-package-distributions
         path: dist/
 
-  publish-to-testpypi:
-    name: Publish to Test PyPI
+  publish-to-pypi:
+    name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
 
     environment:
-      name: testpypi
-      url: https://test.pypi.org/p/cache-postgres
+      name: pypi
+      url: https://pypi.org/p/cache-postgres
 
     permissions:
       id-token: write  # MANDATORY for OIDC Trusted Publishing
@@ -70,7 +58,5 @@ jobs:
         name: python-package-distributions
         path: dist/
 
-    - name: Publish to Test PyPI
+    - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
-      with:
-        repository-url: https://test.pypi.org/legacy/
