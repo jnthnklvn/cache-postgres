@@ -1,0 +1,1326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cache-Postgres vs Valkey Benchmarking Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: rgba(22, 28, 45, 0.4);
+            --panel-border: rgba(255, 255, 255, 0.05);
+            --glass-shine: rgba(255, 255, 255, 0.02);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            
+            /* Cache Colors */
+            --color-valkey: #ef4444;
+            --color-pg-unlogged: #6366f1;
+            --color-pg-logged: #06b6d4;
+            --color-pg-pool1: #f59e0b;
+            
+            /* Gradients */
+            --grad-valkey: linear-gradient(135deg, #ef4444, #b91c1c);
+            --grad-pg-unlogged: linear-gradient(135deg, #6366f1, #4f46e5);
+            --grad-pg-logged: linear-gradient(135deg, #06b6d4, #0891b2);
+            --grad-pg-pool1: linear-gradient(135deg, #f59e0b, #d97706);
+            --grad-accent: linear-gradient(135deg, #a855f7, #6366f1);
+            
+            --radius-lg: 16px;
+            --radius-md: 10px;
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.08) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(239, 68, 68, 0.06) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            line-height: 1.5;
+        }
+
+        header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--panel-border);
+            background: rgba(11, 15, 25, 0.6);
+            backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo-group h1 {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #ffffff 30%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo-group p {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .system-badges {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .badge {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.35rem 0.75rem;
+            border-radius: 50px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--panel-border);
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .badge-pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #22c55e;
+            box-shadow: 0 0 8px #22c55e;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+
+        main {
+            flex: 1;
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 2rem;
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 2rem;
+        }
+
+        @media (max-width: 1024px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .glass-panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--panel-border);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            background-image: linear-gradient(135deg, var(--glass-shine), transparent);
+            transition: var(--transition);
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            align-self: start;
+        }
+
+        .sidebar-section h3 {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--panel-border);
+            padding-bottom: 0.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 0.4rem;
+        }
+
+        .select-input, .number-input {
+            width: 100%;
+            background: rgba(11, 15, 25, 0.8);
+            border: 1px solid var(--panel-border);
+            border-radius: var(--radius-md);
+            padding: 0.75rem;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.85rem;
+            outline: none;
+            transition: var(--transition);
+        }
+
+        .select-input:focus, .number-input:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+        }
+
+        .range-container {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .range-input {
+            flex: 1;
+            accent-color: #6366f1;
+        }
+
+        .range-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            min-width: 45px;
+            text-align: right;
+        }
+
+        .info-card {
+            background: rgba(99, 102, 241, 0.05);
+            border: 1px solid rgba(99, 102, 241, 0.15);
+            padding: 0.75rem 1rem;
+            border-radius: var(--radius-md);
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        .info-card strong {
+            color: #a5b4fc;
+        }
+
+        .btn-run {
+            width: 100%;
+            background: var(--grad-accent);
+            border: none;
+            border-radius: var(--radius-md);
+            padding: 0.9rem;
+            color: white;
+            font-weight: 700;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: var(--transition);
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .btn-run:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
+        }
+
+        .btn-run:active {
+            transform: translateY(0);
+        }
+
+        .btn-run:disabled {
+            background: var(--text-muted);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .content-area {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        /* Benchmark Config Row cards */
+        .configs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1rem;
+        }
+
+        .config-card {
+            background: rgba(30, 41, 59, 0.3);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--panel-border);
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            position: relative;
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        .config-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+        }
+
+        .config-card.valkey::before { background: var(--grad-valkey); }
+        .config-card.pg-unlogged::before { background: var(--grad-pg-unlogged); }
+        .config-card.pg-logged::before { background: var(--grad-pg-logged); }
+        .config-card.pg-pool1::before { background: var(--grad-pg-pool1); }
+
+        .config-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .card-status {
+            font-size: 0.65rem;
+            font-weight: 600;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .card-metric {
+            margin-top: 0.25rem;
+            font-size: 1.75rem;
+            font-weight: 800;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: linear-gradient(135deg, #fff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .card-metric-label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        .card-submetrics {
+            margin-top: 0.5rem;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            font-size: 0.75rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.03);
+            padding-top: 0.5rem;
+            gap: 0.25rem;
+        }
+
+        .submetric-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        /* Charts grid */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        @media (max-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .chart-container {
+            position: relative;
+            height: 280px;
+            width: 100%;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .panel-header h2 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Terminal card */
+        .terminal-panel {
+            background: #060913;
+            border: 1px solid var(--panel-border);
+            border-radius: var(--radius-lg);
+            padding: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
+        }
+
+        .terminal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 0.5rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .terminal-controls {
+            display: flex;
+            gap: 0.4rem;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .dot-red { background: #ef4444; }
+        .dot-yellow { background: #f59e0b; }
+        .dot-green { background: #10b981; }
+
+        .terminal-body {
+            height: 160px;
+            overflow-y: auto;
+            font-size: 0.75rem;
+            color: #38bdf8;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .terminal-line {
+            line-height: 1.4;
+        }
+
+        .terminal-line.success { color: #4ade80; }
+        .terminal-line.warning { color: #fbbf24; }
+        .terminal-line.error { color: #f87171; }
+        .terminal-line.info { color: #94a3b8; }
+
+        /* Compare Table */
+        .table-container {
+            overflow-x: auto;
+            margin-top: 0.5rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+            text-align: left;
+        }
+
+        th {
+            font-weight: 700;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--panel-border);
+            padding: 0.75rem;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 0.75rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+            color: var(--text-primary);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .config-name-cell {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+        }
+
+        .color-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .btn-clear {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.3rem 0.7rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .btn-clear:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        /* Explanations Card */
+        .explanation-card {
+            background: rgba(30, 41, 59, 0.2);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--panel-border);
+            padding: 1.5rem;
+        }
+
+        .explanation-card h3 {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+        }
+
+        .explanation-card p {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            line-height: 1.6;
+        }
+
+        .insights-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        @media (max-width: 640px) {
+            .insights-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .insight-box {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--panel-border);
+            padding: 0.75rem 1rem;
+        }
+
+        .insight-box h4 {
+            font-size: 0.8rem;
+            font-weight: 700;
+            margin-bottom: 0.35rem;
+            color: #a5b4fc;
+        }
+
+        .insight-box p {
+            font-size: 0.75rem;
+            margin: 0;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-container">
+            <div class="logo-group">
+                <h1>Cache-Postgres vs Valkey Benchmarking</h1>
+                <p>Advanced architectural comparison & performance simulator</p>
+            </div>
+            <div class="system-badges">
+                <div class="badge">
+                    <span class="badge-pulse"></span>
+                    <span>PostgreSQL Active Pool</span>
+                </div>
+                <div class="badge">
+                    <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--color-valkey); box-shadow: 0 0 8px var(--color-valkey);"></div>
+                    <span>Valkey Cluster</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Sidebar Controls -->
+        <div class="sidebar">
+            <div class="glass-panel">
+                <div class="sidebar-section">
+                    <h3>Workload Configuration</h3>
+                    
+                    <div class="form-group">
+                        <label for="workload-scenario">Workload Scenario</label>
+                        <select id="workload-scenario" class="select-input" onchange="toggleStampedeControls()">
+                            <option value="read_heavy">Scenario A: Read-Heavy (90% Get, 10% Set)</option>
+                            <option value="write_heavy">Scenario B: Write-Heavy (10% Get, 90% Set)</option>
+                            <option value="atomic_incr">Scenario C: Atomic Counter (100% INCR)</option>
+                            <option value="stampede">Scenario D: Cache Stampede (get_or_create)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="concurrency-level">Concurrency Level (Async Workers)</label>
+                        <div class="range-container">
+                            <input type="range" id="concurrency-level" class="range-input" min="1" max="100" value="20" oninput="document.getElementById('val-concurrency').innerText = this.value">
+                            <span id="val-concurrency" class="range-value">20</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="ops-container">
+                        <label for="total-ops">Total Target Operations</label>
+                        <select id="total-ops" class="select-input">
+                            <option value="500">500 ops</option>
+                            <option value="1000" selected>1,000 ops</option>
+                            <option value="2000">2,000 ops</option>
+                            <option value="5000">5,000 ops</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="delay-container" style="display: none;">
+                        <label for="factory-delay">Expensive Factory Sleep (ms)</label>
+                        <div class="range-container">
+                            <input type="range" id="factory-delay" class="range-input" min="50" max="1000" step="50" value="200" oninput="document.getElementById('val-delay').innerText = this.value + 'ms'">
+                            <span id="val-delay" class="range-value">200ms</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sidebar-section" style="margin-top: 1rem;">
+                    <div class="info-card" id="scenario-info">
+                        <strong>Read-Heavy Workload</strong> simulates standard microservices querying keys. Standard cache hit rates are high. Shows raw performance comparing Redis/Valkey against PostgreSQL read indexes.
+                    </div>
+                </div>
+
+                <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem;">
+                    <button class="btn-run" id="btn-run-bench" onclick="runFullBenchmark()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        Run Selected Scenario
+                    </button>
+                    <button class="btn-run" id="btn-run-all-bench" onclick="runAllBenchmarks()" style="background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 4px 14px rgba(16, 185, 129, 0.45);">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                        Run All Workloads
+                    </button>
+                </div>
+            </div>
+            
+            <div class="glass-panel" style="width: 100%;">
+                <div class="sidebar-section">
+                    <h3>Active Profiles</h3>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem;">
+                        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.03); padding-bottom: 0.25rem;">
+                            <span>PostgreSQL Version</span>
+                            <span style="font-family: monospace; color: #fff;">16.x (Alpine)</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.03); padding-bottom: 0.25rem;">
+                            <span>Valkey Version</span>
+                            <span style="font-family: monospace; color: #fff;">8.0 (Alpine)</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span>Driver</span>
+                            <span style="font-family: monospace; color: #fff;">psycopg 3.x [pool]</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Terminal / Log Stream Panel placed in Sidebar for clean layout -->
+            <div class="terminal-panel" style="width: 100%;">
+                <div class="terminal-header">
+                    <span>LIVE TERMINAL SHELL</span>
+                    <div class="terminal-controls">
+                        <span class="dot dot-red"></span>
+                        <span class="dot dot-yellow"></span>
+                        <span class="dot dot-green"></span>
+                    </div>
+                </div>
+                <div class="terminal-body" id="terminal-body" style="height: 180px;">
+                    <div class="terminal-line info">[System] Ready to run benchmark suite. Select configurations and click "Run Selected Scenario".</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Dashboard View -->
+        <div class="content-area">
+            
+            <!-- Live Metrics cards -->
+            <div class="configs-grid">
+                <!-- Valkey -->
+                <div class="config-card valkey">
+                    <div class="card-header">
+                        <span class="card-title" style="color: var(--color-valkey)">Valkey Cache</span>
+                        <span class="card-status">In-Memory</span>
+                    </div>
+                    <div class="card-metric" id="metric-valkey-ops">-</div>
+                    <div class="card-metric-label">Ops / Second</div>
+                    <div class="card-submetrics">
+                        <div>Avg: <span class="submetric-val" id="metric-valkey-avg">-</span></div>
+                        <div>P95: <span class="submetric-val" id="metric-valkey-p95">-</span></div>
+                    </div>
+                </div>
+
+                <!-- PG Unlogged 10 -->
+                <div class="config-card pg-unlogged">
+                    <div class="card-header">
+                        <span class="card-title" style="color: var(--color-pg-unlogged)">PG Unlogged (Pool=10)</span>
+                        <span class="card-status">WAL-Disabled</span>
+                    </div>
+                    <div class="card-metric" id="metric-pgunlogged-ops">-</div>
+                    <div class="card-metric-label">Ops / Second</div>
+                    <div class="card-submetrics">
+                        <div>Avg: <span class="submetric-val" id="metric-pgunlogged-avg">-</span></div>
+                        <div>P95: <span class="submetric-val" id="metric-pgunlogged-p95">-</span></div>
+                    </div>
+                </div>
+
+                <!-- PG Logged 10 -->
+                <div class="config-card pg-logged">
+                    <div class="card-header">
+                        <span class="card-title" style="color: var(--color-pg-logged)">PG Logged (Pool=10)</span>
+                        <span class="card-status">WAL-Enabled</span>
+                    </div>
+                    <div class="card-metric" id="metric-pglogged-ops">-</div>
+                    <div class="card-metric-label">Ops / Second</div>
+                    <div class="card-submetrics">
+                        <div>Avg: <span class="submetric-val" id="metric-pglogged-avg">-</span></div>
+                        <div>P95: <span class="submetric-val" id="metric-pglogged-p95">-</span></div>
+                    </div>
+                </div>
+
+                <!-- PG Unlogged 1 (contention) -->
+                <div class="config-card pg-pool1">
+                    <div class="card-header">
+                        <span class="card-title" style="color: var(--color-pg-pool1)">PG Bottleneck (Pool=1)</span>
+                        <span class="card-status">Contended</span>
+                    </div>
+                    <div class="card-metric" id="metric-pgpool1-ops">-</div>
+                    <div class="card-metric-label">Ops / Second</div>
+                    <div class="card-submetrics">
+                        <div>Avg: <span class="submetric-val" id="metric-pgpool1-avg">-</span></div>
+                        <div>P95: <span class="submetric-val" id="metric-pgpool1-p95">-</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Panels -->
+            <div class="glass-panel">
+                <div class="panel-header">
+                    <h2>📊 Comparative Charts</h2>
+                </div>
+                <div class="charts-grid">
+                    <div>
+                        <h4 style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 0.5rem; text-align: center;">Throughput (Higher is Better)</h4>
+                        <div class="chart-container">
+                            <canvas id="chart-throughput"></canvas>
+                        </div>
+                    </div>
+                    <div>
+                        <h4 style="font-size: 0.8rem; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 0.5rem; text-align: center;">Latency Profiles in ms (Lower is Better)</h4>
+                        <div class="chart-container">
+                            <canvas id="chart-latency"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Consolidated Performance Matrix -->
+            <div class="glass-panel" style="overflow: hidden; width: 100%;">
+                <div class="panel-header">
+                    <h2>📋 Consolidated Performance Matrix</h2>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="btn-clear" onclick="exportData('csv')" id="btn-export-csv" disabled>📥 Export CSV</button>
+                        <button class="btn-clear" onclick="exportData('json')" id="btn-export-json" disabled>📥 Export JSON</button>
+                        <button class="btn-clear" onclick="clearResults()">🧹 Clear Table</button>
+                    </div>
+                </div>
+                <div class="table-container" style="width: 100; overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; min-width: 900px;">
+                        <thead>
+                            <tr>
+                                <th rowspan="2" style="border-bottom: 2px solid var(--panel-border); vertical-align: middle; padding: 0.75rem;">Configuration Profile</th>
+                                <th colspan="2" style="text-align: center; border-bottom: 1px solid var(--panel-border); background: rgba(99, 102, 241, 0.05); padding: 0.5rem;">Read-Heavy (90/10)</th>
+                                <th colspan="2" style="text-align: center; border-bottom: 1px solid var(--panel-border); background: rgba(6, 182, 212, 0.05); padding: 0.5rem;">Write-Heavy (10/90)</th>
+                                <th colspan="2" style="text-align: center; border-bottom: 1px solid var(--panel-border); background: rgba(245, 158, 11, 0.05); padding: 0.5rem;">Atomic Counter (INCR)</th>
+                                <th colspan="2" style="text-align: center; border-bottom: 1px solid var(--panel-border); background: rgba(239, 68, 68, 0.05); padding: 0.5rem;">Cache Stampede</th>
+                            </tr>
+                            <tr>
+                                <th style="font-size: 0.65rem; text-align: center; border-bottom: 2px solid var(--panel-border); padding: 0.5rem;">Ops/s</th>
+                                <th style="font-size: 0.65rem; text-align: center; border-bottom: 2px solid var(--panel-border); padding: 0.5rem;">Avg Latency</th>
+                                <th style="font-size: 0.65rem; text-align: center; border-bottom: 2px solid var(--panel-border); padding: 0.5rem;">Ops/s</th>
+                                <th style="font-size: 0.65rem; text-align: center; border-bottom: 2px solid var(--panel-border); padding: 0.5rem;">Avg Latency</th>
+                                <th style="font-size: 0.65rem; text-align: center; border-bottom: 2px solid var(--panel-border); padding: 0.5rem;">Ops/s</th>
+                                <th style="font-size: 0.65rem; text-align: center; border-bottom: 2px solid var(--panel-border); padding: 0.5rem;">Avg Latency</th>
+                                <th style="font-size: 0.65rem; text-align: center; border-bottom: 2px solid var(--panel-border); padding: 0.5rem;">Avg Latency</th>
+                                <th style="font-size: 0.65rem; text-align: center; border-bottom: 2px solid var(--panel-border); padding: 0.5rem;">Factory Calls</th>
+                            </tr>
+                        </thead>
+                        <tbody id="detailed-table-body">
+                            <tr>
+                                <td colspan="9" style="text-align: center; color: var(--text-muted); font-style: italic; padding: 2rem;">No benchmark runs completed yet.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Architectural Insights Panel -->
+            <div class="explanation-card">
+                <h3>💡 Architectural Benchmarking Insights</h3>
+                <p>
+                    PostgreSQL-backed distributed caching achieves excellent performance when structured correctly. The benchmarks above demonstrate critical database and cache design concepts:
+                </p>
+                <div class="insights-grid">
+                    <div class="insight-box">
+                        <h4>1. UNLOGGED Tables vs. Write-Ahead Logging (WAL)</h4>
+                        <p>By default, `cache-postgres` sets <strong>use_wal=False</strong>, creating an UNLOGGED PostgreSQL table. This disables disk transaction logs, increasing write speeds immensely (getting closer to Redis/Valkey). Using WAL logging secures data durability but incurs heavy disk I/O penalties on updates/inserts.</p>
+                    </div>
+                    <div class="insight-box">
+                        <h4>2. Advisory Lock Stampede Protection</h4>
+                        <p>Under a "Cache Stampede", massive concurrent clients fetch the same expired key, crashing database backends with duplicated calculations. `cache-postgres` resolves this in <strong>get_or_create</strong> by acquiring an exclusive <strong>pg_advisory_lock</strong>. Concurrent calls wait and load the value computed by worker #1 instantly.</p>
+                    </div>
+                    <div class="insight-box">
+                        <h4>3. Connection Pool Sizing Impact</h4>
+                        <p>Caching operations are short and highly concurrent. A single-connection constraint (Pool=1) leads to high query contention and queuing, skyrocketing P95/P99 latency. Distributing query tasks over a reasonably sized Connection Pool (Pool=10) yields massive parallel throughput gains.</p>
+                    </div>
+                    <div class="insight-box">
+                        <h4>4. Valkey (In-Memory) vs. Postgres (Relational)</h4>
+                        <p>Valkey, being written in highly optimized C and operating entirely in memory, serves as a performance baseline. With optimized pooling and unlogged tables, `cache-postgres` brings relational-based caching surprisingly close to in-memory performance while adding native SQL query capabilities.</p>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <script>
+        // Init state variables
+        let throughputChart = null;
+        let latencyChart = null;
+        let benchmarkResults = []; // Master array storing all runs
+        
+        const configNames = ['valkey', 'postgres_unlogged_10', 'postgres_logged_10', 'postgres_pool1'];
+        const configLabels = {
+            'valkey': 'Valkey Cache',
+            'postgres_unlogged_10': 'PG Unlogged (Pool=10)',
+            'postgres_logged_10': 'PG Logged (Pool=10)',
+            'postgres_pool1': 'PG Bottleneck (Pool=1)'
+        };
+        const configColors = {
+            'valkey': 'rgba(239, 68, 68, 0.85)',
+            'postgres_unlogged_10': 'rgba(99, 102, 241, 0.85)',
+            'postgres_logged_10': 'rgba(6, 182, 212, 0.85)',
+            'postgres_pool1': 'rgba(245, 158, 11, 0.85)'
+        };
+        const configBorders = {
+            'valkey': 'rgba(239, 68, 68, 1)',
+            'postgres_unlogged_10': 'rgba(99, 102, 241, 1)',
+            'postgres_logged_10': 'rgba(6, 182, 212, 1)',
+            'postgres_pool1': 'rgba(245, 158, 11, 1)'
+        };
+
+        // Initialize Charts
+        window.addEventListener('DOMContentLoaded', () => {
+            initCharts();
+            toggleStampedeControls();
+        });
+
+        function toggleStampedeControls() {
+            const scenario = document.getElementById('workload-scenario').value;
+            const opsContainer = document.getElementById('ops-container');
+            const delayContainer = document.getElementById('delay-container');
+            const infoBox = document.getElementById('scenario-info');
+
+            if (scenario === 'stampede') {
+                opsContainer.style.display = 'none';
+                delayContainer.style.display = 'block';
+                infoBox.innerHTML = `<strong>Cache Stampede Workload</strong> simulates <em>N</em> concurrent clients requests executing a slow factory function (like a heavy SQL query). In Valkey, standard caching runs the slow query redundantly <em>N</em> times (causing stress). ` + 
+                                     `In <strong>cache-postgres</strong>, Postgres advisory locking restricts the expensive factory execution to <strong>exactly once</strong>; others sleep and consume the cached result instantly.`;
+            } else {
+                opsContainer.style.display = 'block';
+                delayContainer.style.display = 'none';
+                
+                if (scenario === 'read_heavy') {
+                    infoBox.innerHTML = `<strong>Read-Heavy Workload</strong> simulates standard microservices querying keys. Standard cache hit rates are high (90% reads, 10% writes). Shows raw performance comparing Redis/Valkey against PostgreSQL read indexes.`;
+                } else if (scenario === 'write_heavy') {
+                    infoBox.innerHTML = `<strong>Write-Heavy Workload</strong> simulates state/session storage or high-frequency telemetry (10% reads, 90% writes). Illustrates the power of PostgreSQL UNLOGGED tables in avoiding heavy WAL logging disk writes.`;
+                } else if (scenario === 'atomic_incr') {
+                    infoBox.innerHTML = `<strong>Atomic Counter Workload</strong> increments counters (100% INCR) concurrently. Validates atomicity and compares PostgreSQL raw counter increment logic against Valkey's single-threaded speed.`;
+                }
+            }
+        }
+
+        function initCharts() {
+            const ctxThroughput = document.getElementById('chart-throughput').getContext('2d');
+            const ctxLatency = document.getElementById('chart-latency').getContext('2d');
+
+            Chart.defaults.color = '#94a3b8';
+            Chart.defaults.borderColor = 'rgba(255, 255, 255, 0.05)';
+            Chart.defaults.font.family = "'Plus Jakarta Sans', sans-serif";
+
+            throughputChart = new Chart(ctxThroughput, {
+                type: 'bar',
+                data: {
+                    labels: Object.values(configLabels),
+                    datasets: [{
+                        label: 'Ops / Sec',
+                        data: [0, 0, 0, 0],
+                        backgroundColor: Object.values(configColors),
+                        borderColor: Object.values(configBorders),
+                        borderWidth: 1,
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(255, 255, 255, 0.04)' },
+                            title: { display: true, text: 'Ops / sec', color: '#64748b' }
+                        },
+                        x: {
+                            grid: { display: false }
+                        }
+                    }
+                }
+            });
+
+            latencyChart = new Chart(ctxLatency, {
+                type: 'bar',
+                data: {
+                    labels: Object.values(configLabels),
+                    datasets: [
+                        {
+                            label: 'Avg Latency (ms)',
+                            data: [0, 0, 0, 0],
+                            backgroundColor: 'rgba(99, 102, 241, 0.65)',
+                            borderColor: 'rgba(99, 102, 241, 0.95)',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        },
+                        {
+                            label: 'P95 Latency (ms)',
+                            data: [0, 0, 0, 0],
+                            backgroundColor: 'rgba(245, 158, 11, 0.65)',
+                            borderColor: 'rgba(245, 158, 11, 0.95)',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12, padding: 15 } }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(255, 255, 255, 0.04)' },
+                            title: { display: true, text: 'Latency (ms)', color: '#64748b' }
+                        },
+                        x: {
+                            grid: { display: false }
+                        }
+                    }
+                }
+            });
+        }
+
+        function appendLog(text, type = 'info') {
+            const terminal = document.getElementById('terminal-body');
+            const time = new Date().toLocaleTimeString();
+            const logLine = document.createElement('div');
+            logLine.className = `terminal-line ${type}`;
+            logLine.innerHTML = `[${time}] ${text}`;
+            terminal.appendChild(logLine);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function updateUIMetric(config, ops, avg, p95) {
+            let opsElem = '', avgElem = '', p95Elem = '';
+            if (config === 'valkey') {
+                opsElem = 'metric-valkey-ops'; avgElem = 'metric-valkey-avg'; p95Elem = 'metric-valkey-p95';
+            } else if (config === 'postgres_unlogged_10') {
+                opsElem = 'metric-pgunlogged-ops'; avgElem = 'metric-pgunlogged-avg'; p95Elem = 'metric-pgunlogged-p95';
+            } else if (config === 'postgres_logged_10') {
+                opsElem = 'metric-pglogged-ops'; avgElem = 'metric-pglogged-avg'; p95Elem = 'metric-pglogged-p95';
+            } else if (config === 'postgres_pool1') {
+                opsElem = 'metric-pgpool1-ops'; avgElem = 'metric-pgpool1-avg'; p95Elem = 'metric-pgpool1-p95';
+            }
+
+            document.getElementById(opsElem).innerText = Math.round(ops).toLocaleString();
+            document.getElementById(avgElem).innerText = avg.toFixed(2) + ' ms';
+            document.getElementById(p95Elem).innerText = p95.toFixed(2) + ' ms';
+        }
+
+        function resetMetrics() {
+            configNames.forEach(cfg => {
+                updateUIMetric(cfg, 0, 0, 0);
+            });
+            throughputChart.data.datasets[0].data = [0, 0, 0, 0];
+            throughputChart.update();
+
+            latencyChart.data.datasets[0].data = [0, 0, 0, 0];
+            latencyChart.data.datasets[1].data = [0, 0, 0, 0];
+            latencyChart.update();
+        }
+
+        function renderTable() {
+            const tableBody = document.getElementById('detailed-table-body');
+            const btnCsv = document.getElementById('btn-export-csv');
+            const btnJson = document.getElementById('btn-export-json');
+
+            if (benchmarkResults.length === 0) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="9" style="text-align: center; color: var(--text-muted); font-style: italic; padding: 2rem;">No benchmark runs completed yet.</td>
+                    </tr>
+                `;
+                btnCsv.disabled = true;
+                btnJson.disabled = true;
+                return;
+            }
+
+            btnCsv.disabled = false;
+            btnJson.disabled = false;
+
+            tableBody.innerHTML = '';
+            
+            // Renders exactly one row per configuration approach, joining the scenario columns
+            configNames.forEach(configName => {
+                const colorDotHtml = `<span class="color-dot" style="background: ${configColors[configName]}"></span>`;
+                const label = configLabels[configName];
+                
+                // Extract scenario runs for this config
+                const readData = benchmarkResults.find(r => r.config_name === configName && r.scenario === 'read_heavy');
+                const writeData = benchmarkResults.find(r => r.config_name === configName && r.scenario === 'write_heavy');
+                const incrData = benchmarkResults.find(r => r.config_name === configName && r.scenario === 'atomic_incr');
+                const stampedeData = benchmarkResults.find(r => r.config_name === configName && r.scenario === 'stampede');
+
+                const row = document.createElement('tr');
+                
+                const formatOps = (data) => data ? Math.round(data.ops_per_sec).toLocaleString() : '-';
+                const formatLatency = (data) => data ? data.avg_latency_ms.toFixed(2) + ' ms' : '-';
+                const formatCalls = (data) => data && data.factory_calls !== undefined ? data.factory_calls : '-';
+
+                row.innerHTML = `
+                    <td><span class="config-name-cell">${colorDotHtml} ${label}</span></td>
+                    
+                    <!-- Read Heavy -->
+                    <td style="font-family: monospace; text-align: center;">${formatOps(readData)}</td>
+                    <td style="font-family: monospace; text-align: center;">${formatLatency(readData)}</td>
+                    
+                    <!-- Write Heavy -->
+                    <td style="font-family: monospace; text-align: center;">${formatOps(writeData)}</td>
+                    <td style="font-family: monospace; text-align: center;">${formatLatency(writeData)}</td>
+                    
+                    <!-- Atomic Counter -->
+                    <td style="font-family: monospace; text-align: center;">${formatOps(incrData)}</td>
+                    <td style="font-family: monospace; text-align: center;">${formatLatency(incrData)}</td>
+                    
+                    <!-- Cache Stampede -->
+                    <td style="font-family: monospace; text-align: center;">${formatLatency(stampedeData)}</td>
+                    <td style="font-family: monospace; text-align: center; font-weight: 700; color: ${stampedeData ? (stampedeData.factory_calls === 1 ? '#4ade80' : '#fbbf24') : 'inherit'}">${formatCalls(stampedeData)}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        function clearResults() {
+            benchmarkResults = [];
+            resetMetrics();
+            renderTable();
+            appendLog("🧹 Cleared consolidated results table.", "info");
+        }
+
+        function exportData(format) {
+            if (benchmarkResults.length === 0) return;
+
+            let content = "";
+            let mimeType = "";
+            let filename = "";
+
+            if (format === 'json') {
+                const exportObj = benchmarkResults.map(r => ({
+                    scenario: r.scenario,
+                    config_name: r.config_name,
+                    config_label: configLabels[r.config_name],
+                    total_ops: r.total_ops,
+                    successes: r.successes,
+                    failures: r.failures,
+                    total_time_s: r.total_time_s,
+                    ops_per_sec: r.ops_per_sec,
+                    avg_latency_ms: r.avg_latency_ms,
+                    p95_latency_ms: r.p95_latency_ms,
+                    p99_latency_ms: r.p99_latency_ms,
+                    factory_calls: r.factory_calls
+                }));
+                content = JSON.stringify(exportObj, null, 2);
+                mimeType = "application/json;charset=utf-8;";
+                filename = "benchmark_results.json";
+            } else if (format === 'csv') {
+                const headers = [
+                    "Configuration Profile",
+                    "Read-Heavy Ops/s", "Read-Heavy Avg Latency (ms)",
+                    "Write-Heavy Ops/s", "Write-Heavy Avg Latency (ms)",
+                    "Atomic Counter Ops/s", "Atomic Counter Avg Latency (ms)",
+                    "Cache Stampede Avg Latency (ms)", "Cache Stampede Factory Calls"
+                ];
+                const rows = configNames.map(configName => {
+                    const readData = benchmarkResults.find(r => r.config_name === configName && r.scenario === 'read_heavy');
+                    const writeData = benchmarkResults.find(r => r.config_name === configName && r.scenario === 'write_heavy');
+                    const incrData = benchmarkResults.find(r => r.config_name === configName && r.scenario === 'atomic_incr');
+                    const stampedeData = benchmarkResults.find(r => r.config_name === configName && r.scenario === 'stampede');
+                    
+                    return [
+                        configLabels[configName],
+                        readData ? Math.round(readData.ops_per_sec) : "-",
+                        readData ? readData.avg_latency_ms.toFixed(2) : "-",
+                        writeData ? Math.round(writeData.ops_per_sec) : "-",
+                        writeData ? writeData.avg_latency_ms.toFixed(2) : "-",
+                        incrData ? Math.round(incrData.ops_per_sec) : "-",
+                        incrData ? incrData.avg_latency_ms.toFixed(2) : "-",
+                        stampedeData ? stampedeData.avg_latency_ms.toFixed(2) : "-",
+                        stampedeData && stampedeData.factory_calls !== undefined ? stampedeData.factory_calls : "-"
+                    ];
+                });
+                
+                content = [headers.join(","), ...rows.map(row => row.join(","))].join("\n");
+                mimeType = "text/csv;charset=utf-8;";
+                filename = "benchmark_results.csv";
+            }
+
+            const blob = new Blob([content], { type: mimeType });
+            const link = document.createElement("a");
+            if (link.download !== undefined) {
+                const url = URL.createObjectURL(blob);
+                link.setAttribute("href", url);
+                link.setAttribute("download", filename);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                appendLog(`📥 Downloaded results table as <strong>${filename}</strong>`, 'success');
+            }
+        }
+
+        async function runFullBenchmark() {
+            const scenario = document.getElementById('workload-scenario').value;
+            const concurrency = parseInt(document.getElementById('concurrency-level').value);
+            const operations = parseInt(document.getElementById('total-ops').value);
+            const delay = parseFloat(document.getElementById('factory-delay').value) / 1000.0; // convert to secs
+
+            const btnRun = document.getElementById('btn-run-bench');
+            const btnRunAll = document.getElementById('btn-run-all-bench');
+            btnRun.disabled = true;
+            btnRunAll.disabled = true;
+            
+            // Clear previous runs of the same scenario to prevent duplicate rows
+            benchmarkResults = benchmarkResults.filter(r => r.scenario !== scenario);
+            resetMetrics();
+            renderTable();
+
+            appendLog(`🚀 Starting benchmark suite. Scenario: ${scenario.toUpperCase()}, Concurrency: ${concurrency}, Target: ${scenario === 'stampede' ? concurrency + ' requests' : operations + ' operations'}`, 'info');
+
+            // Run benchmarks sequentially to prevent CPU/IO bottleneck interference
+            for (let i = 0; i < configNames.length; i++) {
+                const configName = configNames[i];
+                const label = configLabels[configName];
+                
+                appendLog(`⚡ Running benchmark on config: <strong>${label}</strong>...`, 'info');
+                
+                try {
+                    const response = await fetch(`/api/benchmark/${configName}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            scenario: scenario,
+                            concurrency: concurrency,
+                            operations: operations,
+                            factory_delay: delay
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const errText = await response.text();
+                        throw new Error(errText || 'Server error');
+                    }
+
+                    const data = await response.json();
+                    
+                    // Push to master results list
+                    benchmarkResults.push(data);
+
+                    // Update UI Metrics cards
+                    updateUIMetric(configName, data.ops_per_sec, data.avg_latency_ms, data.p95_latency_ms);
+
+                    // Update Table
+                    renderTable();
+
+                    // Update Charts
+                    throughputChart.data.datasets[0].data[i] = data.ops_per_sec;
+                    throughputChart.update();
+
+                    latencyChart.data.datasets[0].data[i] = data.avg_latency_ms;
+                    latencyChart.data.datasets[1].data[i] = data.p95_latency_ms;
+                    latencyChart.update();
+
+                    if (scenario === 'stampede') {
+                        appendLog(`✅ Finished: ${label} | Total Time: ${data.total_time_s.toFixed(2)}s | Factory Calls: <strong style="color: #fbbf24">${data.factory_calls}</strong>`, 'success');
+                    } else {
+                        appendLog(`✅ Finished: ${label} | Ops/Sec: ${Math.round(data.ops_per_sec).toLocaleString()} | Successes: ${data.successes}/${data.total_ops}`, 'success');
+                    }
+
+                } catch (err) {
+                    appendLog(`❌ Error running benchmark on ${label}: ${err.message}`, 'error');
+                    console.error(err);
+                }
+            }
+
+            appendLog(`🏁 Benchmark scenario finished.`, 'info');
+            btnRun.disabled = false;
+            btnRunAll.disabled = false;
+        }
+
+        async function runAllBenchmarks() {
+            const concurrency = parseInt(document.getElementById('concurrency-level').value);
+            const operations = parseInt(document.getElementById('total-ops').value);
+            const delay = parseFloat(document.getElementById('factory-delay').value) / 1000.0; // convert to secs
+
+            const btnRun = document.getElementById('btn-run-bench');
+            const btnRunAll = document.getElementById('btn-run-all-bench');
+            btnRun.disabled = true;
+            btnRunAll.disabled = true;
+
+            // Reset list
+            benchmarkResults = [];
+            resetMetrics();
+            renderTable();
+
+            appendLog("🚀 Starting complete benchmark suite for ALL workload scenarios sequentially...", "info");
+
+            const scenarios = ["read_heavy", "write_heavy", "atomic_incr", "stampede"];
+
+            for (const scenario of scenarios) {
+                appendLog(`📁 Starting workload scenario: <strong style="color: #a5b4fc;">${scenario.toUpperCase()}</strong>`, "info");
+                
+                for (let i = 0; i < configNames.length; i++) {
+                    const configName = configNames[i];
+                    const label = configLabels[configName];
+                    
+                    appendLog(`⚡ Running benchmark for <strong>${label}</strong> in <strong>${scenario.toUpperCase()}</strong>...`, "info");
+                    
+                    try {
+                        const response = await fetch(`/api/benchmark/${configName}`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                scenario: scenario,
+                                concurrency: concurrency,
+                                operations: operations,
+                                factory_delay: delay
+                            })
+                        });
+
+                        if (!response.ok) {
+                            const errText = await response.text();
+                            throw new Error(errText || 'Server error');
+                        }
+
+                        const data = await response.json();
+                        
+                        // Push to master results list
+                        benchmarkResults.push(data);
+
+                        // Update UI Metrics cards (for the currently running workload)
+                        updateUIMetric(configName, data.ops_per_sec, data.avg_latency_ms, data.p95_latency_ms);
+
+                        // Update Consolidated Table
+                        renderTable();
+
+                        // Update Charts (for current scenario)
+                        throughputChart.data.datasets[0].data[i] = data.ops_per_sec;
+                        throughputChart.update();
+
+                        latencyChart.data.datasets[0].data[i] = data.avg_latency_ms;
+                        latencyChart.data.datasets[1].data[i] = data.p95_latency_ms;
+                        latencyChart.update();
+
+                        if (scenario === 'stampede') {
+                            appendLog(`✅ Finished: ${label} | Time: ${data.total_time_s.toFixed(2)}s | Factory Calls: <strong style="color: #fbbf24">${data.factory_calls}</strong>`, 'success');
+                        } else {
+                            appendLog(`✅ Finished: ${label} | Ops/Sec: ${Math.round(data.ops_per_sec).toLocaleString()}`, 'success');
+                        }
+
+                    } catch (err) {
+                        appendLog(`❌ Error running benchmark on ${label} [${scenario}]: ${err.message}`, 'error');
+                        console.error(err);
+                    }
+                }
+            }
+
+            appendLog("🏁 Completed complete suite for ALL workloads and configurations successfully!", "success");
+            btnRun.disabled = false;
+            btnRunAll.disabled = false;
+        }
+    </script>
+</body>
+</html>

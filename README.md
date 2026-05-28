@@ -34,6 +34,7 @@
   - [Atomic Counters](#atomic-counters)
   - [Distributed Locks](#distributed-locks)
 - [Thread & Async Safety](#thread--async-safety)
+- [Performance & Benchmarking](#performance--benchmarking)
 - [Database Schema (DDL)](#database-schema-ddl)
 - [Interactive Demo (Docker Compose)](#interactive-demo-docker-compose)
 - [Development & Testing](#development--testing)
@@ -376,6 +377,60 @@ with cache.lock("nightly-billing-sync", expire="10m"):
        connection_factory=lambda: psycopg.connect("postgresql://...")
    )
    ```
+
+---
+
+## Performance & Benchmarking
+
+To validate the real-world performance characteristics and architectural efficiency of `cache-postgres`, we run comprehensive, highly-concurrent benchmarks comparing different library configurations against a standard baseline of **Valkey** (the high-performance, in-memory, Redis-compatible key-value store).
+
+We benchmark four configurations under 20 concurrent async workers across four scenarios:
+
+1. **Valkey Cache (Baseline)**: High-speed, in-memory single-threaded key-value caching.
+2. **PG Unlogged (Pool=10)**: `cache-postgres` optimized with `use_wal=False` (unlogged table) and a 10-connection pool.
+3. **PG Logged (Pool=10)**: `cache-postgres` with `use_wal=True` (regular table, full WAL durability) and a 10-connection pool.
+4. **PG Bottleneck (Pool=1)**: `cache-postgres` with `use_wal=False` but restricted to a single connection to show pool contention.
+
+### Benchmark Results
+
+Here is the pivoted performance matrix captured under concurrent load (20 concurrent workers):
+
+| Configuration Profile | Read-Heavy (90/10) <br> Ops/s \| Avg Latency | Write-Heavy (10/90) <br> Ops/s \| Avg Latency | Atomic Counter (INCR) <br> Ops/s \| Avg Latency | Cache Stampede <br> Avg Latency \| Factory Calls |
+| :--- | :--- | :--- | :--- | :--- |
+| **Valkey Cache** | 9,647 ops/s \| 1.96 ms | 11,253 ops/s \| 1.76 ms | 12,431 ops/s \| 1.59 ms | 202.00 ms \| **20 calls** |
+| **PG Unlogged (Pool=10)** | 1,775 ops/s \| 11.20 ms | **2,120 ops/s** \| **9.36 ms** | **1,926 ops/s** \| **10.30 ms** | 210.85 ms \| **1 call** |
+| **PG Logged (Pool=10)** | 1,771 ops/s \| 11.22 ms | 2,033 ops/s \| 9.75 ms | 1,111 ops/s \| 17.84 ms | 209.64 ms \| **1 call** |
+| **PG Bottleneck (Pool=1)** | 1,531 ops/s \| 12.93 ms | 1,601 ops/s \| 12.37 ms | 1,504 ops/s \| 13.17 ms | 211.67 ms \| **1 call** |
+
+---
+
+### Architectural Analysis & Explanations
+
+#### 1. Valkey (In-Memory) vs. Postgres (Relational) Performance
+Valkey resides entirely in-memory and operates as a single-threaded loop, acting as the performance ceiling. By utilizing unlogged tables, indexing, and raw async psycopg pool architectures, `cache-postgres` reaches **1,700–2,100+ Ops/sec** on standard hardware, placing relational database caching in a high-throughput class suitable for most enterprise web applications.
+
+#### 2. The Power of `UNLOGGED` Tables
+When writing heavily (*Write-Heavy* workload), `PG Unlogged` clocks **2,120 Ops/s**, outperforming `PG Logged` (**2,033 Ops/s**) and reducing average write latency to just **9.36 ms**. In the *Atomic Counter* scenario, disabling WAL write sync allows raw Postgres unlogged operations to reach **1,926 Ops/s** compared to just **1,111 Ops/s** for standard WAL logging (a **73% throughput gain**). Disabling WAL cuts out expensive disk write syncs, making it perfect for volatile cache payloads.
+
+#### 3. Connection Pool Sizing Impact
+Restricting the database to a single connection pool bottleneck (`PG Bottleneck Pool=1`) severely hurts concurrent performance. Read-Heavy throughput drops from **1,775 Ops/s** to **1,531 Ops/s** and write latencies increase across the board because concurrent async tasks must block and queue up to acquire the single active database driver handle. A pool size of 10–20 is optimal for high-throughput caching.
+
+#### 4. The Cache Stampede Advisory Lock Game-Changer
+This is where **`cache-postgres` achieves a major architectural victory**:
+* Under standard Redis/Valkey cache patterns, 20 concurrent requests hitting a missing key with an expensive 200ms calculation all trigger the factory concurrently. Valkey logs **20 redundant factory calls**, hammering the backend API or heavy database 20 times.
+* `cache-postgres`, thanks to exclusive **Postgres Advisory Locks**, serializes the cache miss. The first worker acquires the advisory lock, computes the slow factory, writes it to the table, and releases the lock. The remaining 19 workers wait for the lock, detect the value is now populated, and return it instantly. **Postgres logs exactly 1 factory call!**
+* Despite Valkey's speed, `cache-postgres` completely prevents cache stampedes, saving critical backend databases from high-load traffic collapse.
+
+---
+
+### Caching Profile Recommendation Matrix
+
+| Scenario / Workload Type | Recommended Cache Approach | Rationale |
+| :--- | :--- | :--- |
+| **Volatile Caching** <br> (Fast web sessions, page caches, query caches) | **`cache-postgres (use_wal=False, Pool=10)`** | Offers the absolute highest write throughput and lowest latencies. Since cache data is ephemeral, skipping WAL transaction logging maximizes performance with zero durability drawbacks. |
+| **High Durability Caching** <br> (Shopping carts, financial tokens, api quotas) | **`cache-postgres (use_wal=True, Pool=10)`** | Regular table with full WAL database logging guarantees full ACID persistence. If the Postgres database crashes, all cached records survive the recovery cycle. |
+| **High Concurrency Hot Keys** <br> (Configuration tables, hot products, static data) | **`cache-postgres`** (with advisory lock `get_or_create`) | Database-level advisory locks protect the system against database lockups under dog-piling, guaranteeing $O(1)$ calculations where memory caching falls prey to cache stampedes. |
+| **Ultra-Low Latency / Massive Load** <br> (Social media feeds, game servers) | **`Valkey / Redis`** | When sub-millisecond in-memory speeds and 10,000+ operations/second are required, a dedicated Redis or Valkey instance remains the optimal infrastructure choice. |
 
 ---
 
