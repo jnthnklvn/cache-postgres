@@ -437,39 +437,6 @@ This is where **`cache-postgres` achieves a major architectural victory**:
 
 ---
 
-## Database Schema (DDL)
-
-When `create_if_not_exists` is `True` (default), the following schema is created in your database automatically. 
-
-> [!TIP]
-> The database schema is fully aligned with standard Microsoft SQL caching, permitting cross-language integrations:
-
-```sql
-CREATE SCHEMA IF NOT EXISTS public;
-
-CREATE UNLOGGED TABLE IF NOT EXISTS public.cache (
-    -- Cache key using binary collation for byte-by-byte consistency
-    id                          VARCHAR(449) COLLATE "C"  NOT NULL,
-    -- Serialized value
-    value                       BYTEA                     NOT NULL,
-    -- Absolute expiration time (UTC)
-    expiresattime               TIMESTAMPTZ               NOT NULL,
-    -- Sliding expiration interval in seconds
-    slidingexpirationinseconds  BIGINT                    NULL,
-    -- Absolute ceiling of sliding expiration (UTC)
-    absoluteexpiration          TIMESTAMPTZ               NULL,
-    
-    CONSTRAINT pk_cache PRIMARY KEY (id)
-);
-
--- Index for cleanups by the background scanner
-CREATE INDEX IF NOT EXISTS ix_expiresattime
-    ON public.cache (expiresattime)
-    WITH (deduplicate_items = True);
-```
-
----
-
 ## Interactive Demo (Docker Compose)
 
 We provide a complete, interactive FastAPI application running alongside a PostgreSQL database via Docker Compose. This allows you to explore all features (cache stampede protection, tag-based invalidations, failover resiliency, and atomic counters) in a live environment in just one command!

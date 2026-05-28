@@ -2,9 +2,19 @@ name: Tests
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, dev ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/tests.yml'
   pull_request:
-    branches: [ master ]
+    branches: [ master, dev ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/tests.yml'
 
 permissions:
   contents: write
