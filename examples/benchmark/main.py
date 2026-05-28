@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 import redis.asyncio as redis
 
-from postgres_cache import AsyncPostgresCache, PostgresCacheOptions, EntryOptions
+from cache_postgres import AsyncPostgresCache, PostgresCacheOptions, EntryOptions
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

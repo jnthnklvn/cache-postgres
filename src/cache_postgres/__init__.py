@@ -8,7 +8,7 @@ Public API:
 
 Example::
 
-    from postgres_cache import PostgresCache, PostgresCacheOptions, EntryOptions
+    from cache_postgres import PostgresCache, PostgresCacheOptions, EntryOptions
     from datetime import timedelta
 
     options = PostgresCacheOptions(

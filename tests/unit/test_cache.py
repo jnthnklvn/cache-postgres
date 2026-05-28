@@ -15,8 +15,8 @@ import pytest
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
-from postgres_cache._cache import PostgresCache, _MAX_KEY_LENGTH
-from postgres_cache._options import EntryOptions, PostgresCacheOptions
+from cache_postgres._cache import PostgresCache, _MAX_KEY_LENGTH
+from cache_postgres._options import EntryOptions, PostgresCacheOptions
 
 
 # ---------------------------------------------------------------------------

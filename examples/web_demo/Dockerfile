@@ -9,10 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the core library code to install it
-COPY . /postgres_cache_src
+COPY . /cache_postgres_src
 
-# Install the postgres-cache library from source
-RUN pip install --no-cache-dir -e /postgres_cache_src
+# Install the cache-postgres library from source
+RUN pip install --no-cache-dir -e /cache_postgres_src
 
 # Copy and install demo-specific requirements
 COPY examples/web_demo/requirements.txt /app/requirements.txt

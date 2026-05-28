@@ -2,14 +2,12 @@
 Unit tests for DatabaseOperations (_db.py).
 """
 
-import threading
-import pytest
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, call, patch
+from datetime import datetime
+from unittest.mock import MagicMock, patch
 
-from postgres_cache._db import DatabaseOperations
-from postgres_cache._options import EntryOptions, PostgresCacheOptions
-from postgres_cache._sql import SqlQueries
+from cache_postgres._db import DatabaseOperations
+from cache_postgres._options import PostgresCacheOptions
+from cache_postgres._sql import SqlQueries
 
 
 def make_options(**kwargs) -> PostgresCacheOptions:
@@ -26,7 +24,7 @@ def make_options(**kwargs) -> PostgresCacheOptions:
 def make_db(options=None):
     opts = options or make_options()
     sql = SqlQueries(schema=opts.schema, table=opts.table)
-    with patch("postgres_cache._db.ConnectionPool"):
+    with patch("cache_postgres._db.ConnectionPool"):
         db = DatabaseOperations(options=opts, sql=sql)
     return db, sql
 
@@ -53,7 +51,7 @@ class TestConnectionMode:
     def test_dsn_mode_creates_pool(self):
         opts = make_options(dsn="postgresql://localhost/db")
         sql = SqlQueries(schema=opts.schema, table=opts.table)
-        with patch("postgres_cache._db.ConnectionPool") as mock_pool:
+        with patch("cache_postgres._db.ConnectionPool") as mock_pool:
             db = DatabaseOperations(options=opts, sql=sql)
             mock_pool.assert_called_once_with(
                 conninfo="postgresql://localhost/db",
@@ -67,7 +65,7 @@ class TestConnectionMode:
         factory = MagicMock()
         opts = make_options(dsn=None, connection_factory=factory)
         sql = SqlQueries(schema=opts.schema, table=opts.table)
-        with patch("postgres_cache._db.ConnectionPool") as mock_pool:
+        with patch("cache_postgres._db.ConnectionPool") as mock_pool:
             db = DatabaseOperations(options=opts, sql=sql)
             mock_pool.assert_not_called()
             assert db._pool is None
@@ -75,7 +73,7 @@ class TestConnectionMode:
     def test_dsn_mode_closes_pool(self):
         opts = make_options(dsn="postgresql://localhost/db")
         sql = SqlQueries(schema=opts.schema, table=opts.table)
-        with patch("postgres_cache._db.ConnectionPool") as mock_pool:
+        with patch("cache_postgres._db.ConnectionPool") as mock_pool:
             db = DatabaseOperations(options=opts, sql=sql)
             db.close()
             db._pool.close.assert_called_once()

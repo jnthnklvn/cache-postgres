@@ -11,7 +11,7 @@ Spec: _reversa_sdd/migration/target_domain_model.md § PostgresCacheOptions, Ent
 import pytest
 from datetime import datetime, timedelta, timezone
 
-from postgres_cache._options import (
+from cache_postgres._options import (
     PostgresCacheOptions,
     EntryOptions,
     _MIN_SCAN_INTERVAL,

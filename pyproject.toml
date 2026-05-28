@@ -40,5 +40,5 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["postgres_cache"]
+source = ["cache_postgres"]
 omit = ["tests/*"]

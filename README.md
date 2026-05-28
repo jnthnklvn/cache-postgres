@@ -44,7 +44,7 @@
 
 ## Overview
 
-`cache-postgres` is a modern, production-ready distributed caching library for Python 3.10+ using PostgreSQL as the storage backend. Designed to be lightweight and extremely robust, it bridges the gap between simple in-memory caches and heavy infrastructure dependencies like Redis or Memcached. 
+`cache-postgres` is a modern, **experimental** distributed caching library for Python 3.10+ using PostgreSQL as the storage backend. Designed to be lightweight and extremely robust, it bridges the gap between simple in-memory caches and heavy infrastructure dependencies like Redis or Memcached. 
 
 With native support for both **synchronous** and **asynchronous** paradigms, it is suitable for any modern Python web application (e.g., FastAPI, Django, Flask, Sanic).
 
@@ -97,7 +97,7 @@ Ensure you have a PostgreSQL database available (version 13+ recommended for opt
 Recommended as a context manager to manage background scanner threads cleanly:
 
 ```python
-from postgres_cache import PostgresCache, PostgresCacheOptions
+from cache_postgres import PostgresCache, PostgresCacheOptions
 
 options = PostgresCacheOptions(
     dsn="postgresql://user:password@localhost:5432/mydb",
@@ -123,7 +123,7 @@ Fully native asynchronous support using Python's standard `async with` syntax:
 
 ```python
 import asyncio
-from postgres_cache import AsyncPostgresCache, PostgresCacheOptions
+from cache_postgres import AsyncPostgresCache, PostgresCacheOptions
 
 options = PostgresCacheOptions(
     dsn="postgresql://user:password@localhost:5432/mydb",
@@ -191,7 +191,7 @@ Example:
 
 ```python
 from datetime import timedelta
-from postgres_cache import PostgresCacheOptions
+from cache_postgres import PostgresCacheOptions
 
 options = PostgresCacheOptions(
     dsn="postgresql://user:password@localhost:5432/mydb",
@@ -207,7 +207,7 @@ options = PostgresCacheOptions(
 You can customize expiration logic per-key using `EntryOptions`. You can provide absolute expirations, sliding expirations, or strings representing intervals (e.g. `"20m"`, `"1h"`):
 
 ```python
-from postgres_cache import EntryOptions
+from cache_postgres import EntryOptions
 from datetime import timedelta
 
 # Option 1: Absolute expiration
@@ -289,7 +289,7 @@ Make your application extremely resilient to downstream outages. If your databas
 
 ```python
 import requests
-from postgres_cache import PostgresCache
+from cache_postgres import PostgresCache
 
 cache = PostgresCache(options)
 

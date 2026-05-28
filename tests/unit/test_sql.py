@@ -10,7 +10,7 @@ Spec: _reversa_sdd/migration/target_architecture.md § BC-2
 
 import pytest
 
-from postgres_cache._sql import SqlQueries, _delimit_identifier, COL_ID, COL_VALUE
+from cache_postgres._sql import SqlQueries, _delimit_identifier, COL_VALUE
 
 
 # ---------------------------------------------------------------------------

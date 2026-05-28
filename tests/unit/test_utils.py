@@ -5,7 +5,7 @@ Unit tests for utility functions (_utils.py).
 import pytest
 from datetime import timedelta
 
-from postgres_cache._utils import parse_duration
+from cache_postgres._utils import parse_duration
 
 
 class TestParseDurationValid:

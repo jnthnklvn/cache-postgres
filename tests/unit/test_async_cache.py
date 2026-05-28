@@ -5,10 +5,10 @@ Unit tests for AsyncPostgresCache (_async_cache.py).
 import asyncio
 import pytest
 from datetime import timedelta
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock
 
-from postgres_cache._async_cache import AsyncPostgresCache, _MAX_KEY_LENGTH
-from postgres_cache._options import EntryOptions, PostgresCacheOptions
+from cache_postgres._async_cache import AsyncPostgresCache, _MAX_KEY_LENGTH
+from cache_postgres._options import EntryOptions, PostgresCacheOptions
 
 
 @pytest.fixture(scope="module", params=["asyncio"])

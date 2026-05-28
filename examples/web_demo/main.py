@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from postgres_cache import AsyncPostgresCache, PostgresCacheOptions, EntryOptions
+from cache_postgres import AsyncPostgresCache, PostgresCacheOptions, EntryOptions
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -16,7 +16,7 @@ logger = logging.getLogger("cache_demo")
 # Get database URL from environment or default to local docker setup
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:secretpassword@localhost:5432/cache_demo")
 
-# Configure postgres-cache options
+# Configure cache-postgres options
 options = PostgresCacheOptions(
     dsn=DATABASE_URL,
     schema="public",

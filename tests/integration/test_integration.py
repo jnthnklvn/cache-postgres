@@ -35,7 +35,7 @@ from typing import Generator
 import psycopg
 import pytest
 
-from postgres_cache import PostgresCache, PostgresCacheOptions, EntryOptions
+from cache_postgres import PostgresCache, PostgresCacheOptions, EntryOptions
 
 # ---------------------------------------------------------------------------
 # Configuration
