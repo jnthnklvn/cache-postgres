@@ -1,5 +1,5 @@
 -- ============================================================
--- postgres-cache — DDL do schema de cache
+-- cache-postgres — DDL do schema de cache
 -- Target Data Model: _reversa_sdd/migration/target_data_model.md
 --
 -- Uso:

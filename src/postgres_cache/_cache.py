@@ -1,5 +1,5 @@
 """
-Public cache facade for postgres-cache.
+Public cache facade for cache-postgres.
 
 Spec: _reversa_sdd/migration/target_architecture.md § BC-1, DA-03, DA-04, DA-10
       _reversa_sdd/migration/target_domain_model.md § Comandos, PostgresCache
@@ -142,7 +142,7 @@ class PostgresCache:
         self._stop_event.clear()
         self._scanner_thread = threading.Thread(
             target=self._scanner_loop,
-            name="postgres-cache-scanner",
+            name="cache-postgres-scanner",
             daemon=True,  # DA-03: daemon=True ensures thread dies with process
         )
         self._scanner_thread.start()

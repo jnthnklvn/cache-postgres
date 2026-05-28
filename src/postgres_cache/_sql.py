@@ -1,5 +1,5 @@
 """
-SQL query strings for postgres-cache.
+SQL query strings for cache-postgres.
 
 Spec: _reversa_sdd/migration/target_architecture.md § BC-2, DA-02
       _reversa_sdd/migration/target_data_model.md § SQL das operações principais

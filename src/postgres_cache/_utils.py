@@ -1,5 +1,5 @@
 """
-Utility functions for postgres-cache.
+Utility functions for cache-postgres.
 """
 
 import re

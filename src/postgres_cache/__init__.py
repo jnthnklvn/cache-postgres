@@ -1,5 +1,5 @@
 """
-postgres-cache — Distributed cache over PostgreSQL with stampede protection.
+cache-postgres — Distributed cache over PostgreSQL with stampede protection.
 
 Public API:
   - PostgresCache: main cache class (context manager recommended)

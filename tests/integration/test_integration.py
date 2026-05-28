@@ -1,5 +1,5 @@
 """
-Integration tests for postgres-cache — parity validation suite.
+Integration tests for cache-postgres — parity validation suite.
 
 These tests require a real PostgreSQL database.
 Set the environment variable PGCACHE_TEST_DSN before running:

@@ -1,5 +1,5 @@
 """
-Database access layer for postgres-cache.
+Database access layer for cache-postgres.
 
 Spec: _reversa_sdd/migration/target_architecture.md § BC-2, DA-01, DA-05, DA-06, DA-07
       _reversa_sdd/migration/target_domain_model.md § DatabaseOperations

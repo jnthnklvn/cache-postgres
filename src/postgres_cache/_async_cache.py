@@ -1,5 +1,5 @@
 """
-Async Public cache facade for postgres-cache.
+Async Public cache facade for cache-postgres.
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ class AsyncPostgresCache:
         self._stop_event.clear()
         
         loop = asyncio.get_running_loop()
-        self._scanner_task = loop.create_task(self._scanner_loop(), name="postgres-cache-scanner")
+        self._scanner_task = loop.create_task(self._scanner_loop(), name="cache-postgres-scanner")
         logger.debug("Expiration scanner started (interval=%s).", self._options.expiration_scan_interval)
 
     async def _scanner_loop(self) -> None:

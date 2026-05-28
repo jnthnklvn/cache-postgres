@@ -1,5 +1,5 @@
 """
-Configuration dataclasses for postgres-cache.
+Configuration dataclasses for cache-postgres.
 
 Spec: _reversa_sdd/migration/target_architecture.md § BC-3 (Configuration)
       _reversa_sdd/migration/target_domain_model.md § PostgresCacheOptions, EntryOptions

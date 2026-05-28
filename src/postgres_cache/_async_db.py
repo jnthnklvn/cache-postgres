@@ -1,5 +1,5 @@
 """
-Async Database access layer for postgres-cache.
+Async Database access layer for cache-postgres.
 """
 
 from __future__ import annotations
