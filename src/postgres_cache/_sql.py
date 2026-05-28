@@ -25,16 +25,13 @@ COL_ABSOLUTE_EXPIRATION = "absoluteexpiration"
 
 
 def _delimit_identifier(name: str) -> str:
-    """Return the identifier as-is (no quoting).
+    """Return the identifier properly escaped with double quotes.
 
-    Bug-for-bug parity with the legacy C# DelimitIdentifier which also performs
-    no escaping. Schema/table names must be safe identifiers.
-    DA-08 / BR-MIGRAR-013 / gaps.md § L-001.
-
-    TODO: implement proper quoting (e.g. double-quote escaping) for identifiers
-          that contain special characters or reserved words.
+    Escapes internal double quotes according to standard SQL, ensuring
+    safe identifiers for schema and table names.
     """
-    return name
+    safe_name = name.replace('"', '""')
+    return f'"{safe_name}"'
 
 
 class SqlQueries:
@@ -116,20 +113,10 @@ class SqlQueries:
         # Params: (key, value, expires_at, sliding_secs_or_None, abs_exp_or_None)
         # ------------------------------------------------------------------
         self.set_item: str = (
-            f"WITH new_values AS ("
-            f"  SELECT"
-            f"    %s::varchar(449)  AS {COL_ID},"
-            f"    %s::bytea         AS {COL_VALUE},"
-            f"    %s::timestamptz   AS {COL_EXPIRES_AT},"
-            f"    %s::bigint        AS {COL_SLIDING_SECONDS},"
-            f"    %s::timestamptz   AS {COL_ABSOLUTE_EXPIRATION}"
-            f")"
-            f" INSERT INTO {qualified}"
-            f"   ({COL_ID}, {COL_VALUE}, {COL_EXPIRES_AT},"
-            f"    {COL_SLIDING_SECONDS}, {COL_ABSOLUTE_EXPIRATION})"
-            f" SELECT {COL_ID}, {COL_VALUE}, {COL_EXPIRES_AT},"
-            f"        {COL_SLIDING_SECONDS}, {COL_ABSOLUTE_EXPIRATION}"
-            f" FROM new_values"
+            f"INSERT INTO {qualified}"
+            f"  ({COL_ID}, {COL_VALUE}, {COL_EXPIRES_AT},"
+            f"   {COL_SLIDING_SECONDS}, {COL_ABSOLUTE_EXPIRATION})"
+            f" VALUES (%s::varchar(449), %s::bytea, %s::timestamptz, %s::bigint, %s::timestamptz)"
             f" ON CONFLICT ({COL_ID}) DO UPDATE SET"
             f"   {COL_VALUE}               = EXCLUDED.{COL_VALUE},"
             f"   {COL_EXPIRES_AT}          = EXCLUDED.{COL_EXPIRES_AT},"

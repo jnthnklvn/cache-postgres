@@ -60,13 +60,19 @@ with PostgresCache(options) as cache:
 ## Connection modes
 
 ```python
-# Mode 1: DSN string (library creates connections internally)
-options = PostgresCacheOptions(dsn="postgresql://...", schema="public", table="cache")
-
-# Mode 2: connection factory (you control the pool)
-import psycopg2
+# Mode 1: DSN string (library creates and manages a ConnectionPool internally)
 options = PostgresCacheOptions(
-    connection_factory=lambda: psycopg2.connect("postgresql://..."),
+    dsn="postgresql://...", 
+    pool_min_size=1,
+    pool_max_size=10,
+    schema="public", 
+    table="cache"
+)
+
+# Mode 2: connection factory (you control the connection or pool)
+import psycopg
+options = PostgresCacheOptions(
+    connection_factory=lambda: psycopg.connect("postgresql://..."),
     schema="public",
     table="cache",
 )

@@ -15,13 +15,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-# psycopg2 connection type hint (avoids a hard import at module level for
-# environments without psycopg2 installed during type-checking only)
-try:
-    import psycopg2  # noqa: F401
-    _ConnectionType = "psycopg2.extensions.connection"
-except ImportError:  # pragma: no cover
-    _ConnectionType = object
 
 #: Minimum allowed scanner interval — BR-MIGRAR-001
 _MIN_SCAN_INTERVAL: timedelta = timedelta(minutes=5)
@@ -41,9 +34,9 @@ class PostgresCacheOptions:
     All fields validated in __post_init__.
 
     Connection modes (BR-MIGRAR-010, in priority order):
-      1. ``connection_factory`` — callable that returns a psycopg2 connection.
+      1. ``connection_factory`` — callable that returns a psycopg connection.
          The library does **not** close connections it did not create.
-      2. ``dsn`` — connection string; library creates and manages connections.
+      2. ``dsn`` — connection string; library creates and manages a ConnectionPool.
       3. Neither → ValueError at construction time.
 
     Example::
@@ -69,10 +62,16 @@ class PostgresCacheOptions:
     """
 
     connection_factory: Callable[[], object] | None = None
-    """Callable returning a psycopg2 connection.
+    """Callable returning a psycopg connection.
     When provided, takes priority over ``dsn``.
     The library does **not** call ``close()`` on returned connections.
     """
+
+    pool_min_size: int = 1
+    """Minimum number of connections in the ConnectionPool (used with dsn)."""
+
+    pool_max_size: int = 10
+    """Maximum number of connections in the ConnectionPool (used with dsn)."""
 
     # ------------------------------------------------------------------
     # Table location (BR-MIGRAR-008)
@@ -149,7 +148,7 @@ class PostgresCacheOptions:
         if self.dsn is None and self.connection_factory is None:
             raise ValueError(
                 "PostgresCacheOptions requires either 'dsn' or 'connection_factory'. "
-                "Provide a DSN string or a callable that returns a psycopg2 connection."
+                "Provide a DSN string or a callable that returns a psycopg connection."
             )
         if self.dsn is not None and self.connection_factory is not None:
             raise ValueError(

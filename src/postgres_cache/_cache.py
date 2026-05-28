@@ -117,6 +117,9 @@ class PostgresCache:
                     "Scanner thread did not stop within 5 seconds."
                 )
         self._scanner_thread = None
+        
+        # Ensure database connection pool is closed
+        self._db.close()
 
     # ------------------------------------------------------------------
     # Scanner thread — BR-MIGRAR-005, DA-03

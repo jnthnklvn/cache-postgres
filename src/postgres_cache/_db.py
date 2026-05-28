@@ -19,10 +19,11 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timezone
-from typing import Callable
+from contextlib import contextmanager
+from typing import Callable, Iterator
 
-import psycopg2
-import psycopg2.extensions
+import psycopg
+from psycopg_pool import ConnectionPool
 
 from ._options import EntryOptions, PostgresCacheOptions
 from ._sql import SqlQueries
@@ -53,27 +54,43 @@ class DatabaseOperations:
         self._table_created: bool = False
         self._ddl_lock: threading.Lock = threading.Lock()
 
+        # Connection Pool (BR-MIGRAR-010)
+        self._pool: ConnectionPool | None = None
+        if self._options.connection_factory is None and self._options.dsn:
+            self._pool = ConnectionPool(
+                conninfo=self._options.dsn,
+                min_size=self._options.pool_min_size,
+                max_size=self._options.pool_max_size,
+                open=True,
+            )
+
+    def close(self) -> None:
+        """Close the connection pool if managed by the library."""
+        if self._pool is not None:
+            self._pool.close()
+
     # ------------------------------------------------------------------
     # Connection management — BR-MIGRAR-010
     # ------------------------------------------------------------------
 
-    def _connect(self) -> psycopg2.extensions.connection:
-        """Return a psycopg2 connection according to the configured mode.
-
-        Mode priority (BR-MIGRAR-010):
-          1. connection_factory → call it; library does NOT close the result.
-          2. dsn → psycopg2.connect(dsn); caller is responsible for close().
-
-        Returns:
-            An open psycopg2 connection (autocommit state is caller's responsibility).
+    @contextmanager
+    def _get_connection(self) -> Iterator[psycopg.Connection]:
+        """Yield a connection from the pool or the factory.
+        
+        The caller is responsible for committing or rolling back their
+        transactions (e.g. via `with conn.transaction():` or explicitly).
         """
-        if self._options.connection_factory is not None:
-            return self._options.connection_factory()
-        return psycopg2.connect(self._options.dsn)
+        if self._pool is not None:
+            with self._pool.connection() as conn:
+                yield conn
+        else:
+            conn = self._options.connection_factory()
+            try:
+                yield conn
+            finally:
+                pass  # Do not close factory connections
 
-    def _is_owned_connection(self) -> bool:
-        """True when the library created the connection (dsn mode)."""
-        return self._options.connection_factory is None
+
 
     # ------------------------------------------------------------------
     # DDL — BR-MIGRAR-006 (double-checked locking)
@@ -94,29 +111,26 @@ class DatabaseOperations:
         with self._ddl_lock:
             if self._table_created:
                 return
-            conn = self._connect()
-            try:
-                with conn:  # auto-commit on success, rollback on error
-                    with conn.cursor() as cur:
-                        cur.execute(self._sql.create_schema)
-                        cur.execute(self._sql.create_table)
-                        cur.execute(self._sql.create_index)
-                self._table_created = True
-                logger.debug(
-                    "Cache table '%s.%s' ensured.",
-                    self._options.schema,
-                    self._options.table,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to create cache table '%s.%s'.",
-                    self._options.schema,
-                    self._options.table,
-                )
-                raise
-            finally:
-                if self._is_owned_connection():
-                    conn.close()
+            with self._get_connection() as conn:
+                try:
+                    with conn.transaction():
+                        with conn.cursor() as cur:
+                            cur.execute(self._sql.create_schema)
+                            cur.execute(self._sql.create_table)
+                            cur.execute(self._sql.create_index)
+                    self._table_created = True
+                    logger.debug(
+                        "Cache table '%s.%s' ensured.",
+                        self._options.schema,
+                        self._options.table,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to create cache table '%s.%s'.",
+                        self._options.schema,
+                        self._options.table,
+                    )
+                    raise
 
     # ------------------------------------------------------------------
     # get — BR-MIGRAR-003, BR-MIGRAR-009
@@ -140,20 +154,16 @@ class DatabaseOperations:
         self.ensure_table_exists()
         utc_now = datetime.now(tz=timezone.utc)  # RISK-004
 
-        conn = self._connect()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(self._sql.get_item, (utc_now, key, utc_now))
-                row = cur.fetchone()
-            conn.commit()
-            return row[0] if row else None
-        except Exception:
-            conn.rollback()
-            logger.exception("get(%r) failed.", key)
-            raise
-        finally:
-            if self._is_owned_connection():
-                conn.close()
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.get_item, (utc_now, key, utc_now))
+                        row = cur.fetchone()
+                return row[0] if row else None
+            except Exception:
+                logger.exception("get(%r) failed.", key)
+                raise
 
     # ------------------------------------------------------------------
     # set — BR-MIGRAR-003, BR-MIGRAR-007
@@ -202,21 +212,17 @@ class DatabaseOperations:
             from datetime import timedelta
             expires_at = utc_now + timedelta(days=365 * 100)
 
-        conn = self._connect()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    self._sql.set_item,
-                    (key, value, expires_at, sliding_secs, abs_exp),
-                )
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            logger.exception("set(%r) failed.", key)
-            raise
-        finally:
-            if self._is_owned_connection():
-                conn.close()
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            self._sql.set_item,
+                            (key, value, expires_at, sliding_secs, abs_exp),
+                        )
+            except Exception:
+                logger.exception("set(%r) failed.", key)
+                raise
 
     # ------------------------------------------------------------------
     # refresh — BR-MIGRAR-003, BR-MIGRAR-009
@@ -235,18 +241,14 @@ class DatabaseOperations:
         self.ensure_table_exists()
         utc_now = datetime.now(tz=timezone.utc)  # RISK-004
 
-        conn = self._connect()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(self._sql.refresh_item, (utc_now, key, utc_now))
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            logger.exception("refresh(%r) failed.", key)
-            raise
-        finally:
-            if self._is_owned_connection():
-                conn.close()
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.refresh_item, (utc_now, key, utc_now))
+            except Exception:
+                logger.exception("refresh(%r) failed.", key)
+                raise
 
     # ------------------------------------------------------------------
     # remove — BR-MIGRAR-003
@@ -259,18 +261,14 @@ class DatabaseOperations:
             key: Cache key.
         """
         self.ensure_table_exists()
-        conn = self._connect()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(self._sql.remove_item, (key,))
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            logger.exception("remove(%r) failed.", key)
-            raise
-        finally:
-            if self._is_owned_connection():
-                conn.close()
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.remove_item, (key,))
+            except Exception:
+                logger.exception("remove(%r) failed.", key)
+                raise
 
     # ------------------------------------------------------------------
     # delete_expired — BR-MIGRAR-018 (background scanner)
@@ -287,22 +285,18 @@ class DatabaseOperations:
             Number of rows deleted.
         """
         utc_now = datetime.now(tz=timezone.utc)  # RISK-004
-        conn = self._connect()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(self._sql.delete_expired, (utc_now,))
-                count = cur.rowcount
-            conn.commit()
-            if count > 0:
-                logger.debug("Deleted %d expired cache entries.", count)
-            return count
-        except Exception:
-            conn.rollback()
-            logger.exception("delete_expired() failed.")
-            raise
-        finally:
-            if self._is_owned_connection():
-                conn.close()
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.delete_expired, (utc_now,))
+                        count = cur.rowcount
+                if count > 0:
+                    logger.debug("Deleted %d expired cache entries.", count)
+                return count
+            except Exception:
+                logger.exception("delete_expired() failed.")
+                raise
 
     # ------------------------------------------------------------------
     # get_or_create — BR-MIGRAR-002 (stampede protection via advisory lock)
@@ -341,38 +335,51 @@ class DatabaseOperations:
         self.ensure_table_exists()
         utc_now = datetime.now(tz=timezone.utc)  # RISK-004
 
-        conn = self._connect()
-        owned = self._is_owned_connection()
-        try:
-            # RISK-006: explicit transaction required for pg_advisory_xact_lock
-            conn.autocommit = False
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        # Step 1: acquire advisory lock (blocks until available)
+                        cur.execute(self._sql.advisory_lock, (key,))
 
-            with conn.cursor() as cur:
-                # Step 1: acquire advisory lock (blocks until available)
-                cur.execute(self._sql.advisory_lock, (key,))
+                        # Step 2: double-check after acquiring lock
+                        cur.execute(self._sql.get_item_after_lock, (key, utc_now))
+                        row = cur.fetchone()
 
-                # Step 2: double-check after acquiring lock
-                cur.execute(self._sql.get_item_after_lock, (key, utc_now))
-                row = cur.fetchone()
+                    if row is not None:
+                        # Another worker already populated the entry
+                        return row[0]
 
-            if row is not None:
-                # Another worker already populated the entry
-                conn.commit()
-                return row[0]
+                    # Step 3: cache miss even after lock — call factory once
+                    value = factory()
 
-            # Step 3: cache miss even after lock — call factory once
-            value = factory()
+                    # Step 4: store the computed value
+                    with conn.cursor() as cur:
+                        # Pass explicit sliding/absolute values as done in set()
+                        options = options or EntryOptions(
+                            sliding_expiration=self._options.default_sliding_expiration
+                        )
+                        sliding_secs = options.resolve_sliding_seconds()
+                        abs_exp = options.resolve_expires_at(now=utc_now)
+                        
+                        if sliding_secs is not None:
+                            from datetime import timedelta
+                            expires_at = utc_now + timedelta(seconds=sliding_secs)
+                            if abs_exp is not None and abs_exp < expires_at:
+                                expires_at = abs_exp
+                        elif abs_exp is not None:
+                            expires_at = abs_exp
+                        else:
+                            from datetime import timedelta
+                            expires_at = utc_now + timedelta(days=365 * 100)
 
-            # Step 4: store the computed value
-            self.set(key, value, options)
+                        cur.execute(
+                            self._sql.set_item,
+                            (key, value, expires_at, sliding_secs, abs_exp),
+                        )
 
-            conn.commit()
-            return value
+                    return value
 
-        except Exception:
-            conn.rollback()
-            logger.exception("get_or_create(%r) failed.", key)
-            raise
-        finally:
-            if owned:
-                conn.close()
+            except Exception:
+                logger.exception("get_or_create(%r) failed.", key)
+                raise

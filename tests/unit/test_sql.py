@@ -42,15 +42,14 @@ def sql_custom() -> SqlQueries:
 
 
 class TestDelimitIdentifier:
-    def test_returns_input_unchanged(self):
-        assert _delimit_identifier("public") == "public"
+    def test_returns_escaped(self):
+        assert _delimit_identifier("public") == '"public"'
 
-    def test_returns_empty_string_unchanged(self):
-        assert _delimit_identifier("") == ""
+    def test_returns_empty_string_escaped(self):
+        assert _delimit_identifier("") == '""'
 
-    def test_returns_special_chars_unchanged(self):
-        # Bug-for-bug: no escaping performed
-        assert _delimit_identifier("my-schema") == "my-schema"
+    def test_escapes_internal_quotes(self):
+        assert _delimit_identifier('my"schema') == '"my""schema"'
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +82,7 @@ class TestCreateTable:
         assert "UNLOGGED" not in sql_wal.create_table
 
     def test_contains_qualified_table_name(self, sql: SqlQueries):
-        assert "public.cache" in sql.create_table
+        assert '"public"."cache"' in sql.create_table
 
     def test_contains_id_column(self, sql: SqlQueries):
         assert "id" in sql.create_table
@@ -111,7 +110,7 @@ class TestCreateTable:
         assert "PRIMARY KEY" in sql.create_table
 
     def test_custom_schema_table(self, sql_custom: SqlQueries):
-        assert "myschema.mycache" in sql_custom.create_table
+        assert '"myschema"."mycache"' in sql_custom.create_table
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +129,7 @@ class TestCreateIndex:
         assert "deduplicate_items" in sql.create_index
 
     def test_on_correct_table(self, sql: SqlQueries):
-        assert "public.cache" in sql.create_index
+        assert '"public"."cache"' in sql.create_index
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +156,7 @@ class TestGetItem:
         assert sql.get_item.count("%s") == 3
 
     def test_on_correct_table(self, sql: SqlQueries):
-        assert "public.cache" in sql.get_item
+        assert '"public"."cache"' in sql.get_item
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +171,9 @@ class TestSetItem:
         assert "ON CONFLICT" in upper
         assert "DO UPDATE" in upper
 
-    def test_uses_cte(self, sql: SqlQueries):
+    def test_uses_direct_insert(self, sql: SqlQueries):
         upper = sql.set_item.upper()
-        assert upper.strip().startswith("WITH")
+        assert upper.strip().startswith("INSERT INTO")
 
     def test_five_placeholders(self, sql: SqlQueries):
         # Params: (key, value, expires_at, sliding_secs, abs_exp)
@@ -185,7 +184,7 @@ class TestSetItem:
             assert col in sql.set_item
 
     def test_on_correct_table(self, sql: SqlQueries):
-        assert "public.cache" in sql.set_item
+        assert '"public"."cache"' in sql.set_item
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +207,7 @@ class TestRefreshItem:
         assert "expiresattime >=" in sql.refresh_item
 
     def test_on_correct_table(self, sql: SqlQueries):
-        assert "public.cache" in sql.refresh_item
+        assert '"public"."cache"' in sql.refresh_item
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +223,7 @@ class TestRemoveItem:
         assert sql.remove_item.count("%s") == 1
 
     def test_on_correct_table(self, sql: SqlQueries):
-        assert "public.cache" in sql.remove_item
+        assert '"public"."cache"' in sql.remove_item
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +242,7 @@ class TestDeleteExpired:
         assert "expiresattime <" in sql.delete_expired
 
     def test_on_correct_table(self, sql: SqlQueries):
-        assert "public.cache" in sql.delete_expired
+        assert '"public"."cache"' in sql.delete_expired
 
 
 # ---------------------------------------------------------------------------
@@ -285,4 +284,4 @@ class TestGetItemAfterLock:
         assert COL_VALUE in sql.get_item_after_lock
 
     def test_on_correct_table(self, sql: SqlQueries):
-        assert "public.cache" in sql.get_item_after_lock
+        assert '"public"."cache"' in sql.get_item_after_lock

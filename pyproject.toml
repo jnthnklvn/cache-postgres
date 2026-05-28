@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Kelvin" }]
-keywords = ["cache", "postgresql", "distributed-cache", "psycopg2"]
+keywords = ["cache", "postgresql", "distributed-cache", "psycopg"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Database",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = ["psycopg2>=2.9"]
+dependencies = ["psycopg[pool]>=3.1.0"]
 
 [project.urls]
 Repository = "https://github.com/j_kel/postgres-cache"
