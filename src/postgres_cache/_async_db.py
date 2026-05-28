@@ -40,6 +40,8 @@ class AsyncDatabaseOperations:
         self._ddl_lock: asyncio.Lock = asyncio.Lock()
 
         # Connection Pool
+        self._pool_opened: bool = False
+        self._pool_lock: asyncio.Lock = asyncio.Lock()
         self._pool: AsyncConnectionPool | None = None
         if self._options.async_connection_factory is None and self._options.dsn:
             self._pool = AsyncConnectionPool(
@@ -49,16 +51,26 @@ class AsyncDatabaseOperations:
                 open=False,
             )
 
+    async def open(self) -> None:
+        """Open the connection pool asynchronously if it's not already open."""
+        if self._pool is None or self._pool_opened:
+            return
+        async with self._pool_lock:
+            if not self._pool_opened:
+                await self._pool.open(wait=True)
+                self._pool_opened = True
+
     async def close(self) -> None:
         """Close the connection pool if managed by the library."""
         if self._pool is not None:
             await self._pool.close()
+            self._pool_opened = False
 
     @asynccontextmanager
     async def _get_connection(self) -> AsyncIterator[psycopg.AsyncConnection]:
         """Yield an async connection from the pool or the factory."""
         if self._pool is not None:
-            await self._pool.open(wait=True)
+            await self.open()
             async with self._pool.connection() as conn:
                 yield conn
         else:
@@ -320,7 +332,7 @@ class AsyncDatabaseOperations:
                     async with conn.cursor() as cur:
                         await cur.execute(
                             self._sql.increment_item, 
-                            (key, value, utc_now, value, utc_now)
+                            (key, value, utc_now, value, value, utc_now)
                         )
                         row = await cur.fetchone()
                 return int(row[0]) if row else value
@@ -408,6 +420,7 @@ class AsyncDatabaseOperations:
 
     async def delete_expired(self) -> int:
         """Delete all expired entries in a single batch statement."""
+        await self.ensure_table_exists()
         utc_now = datetime.now(tz=timezone.utc)
         async with self._get_connection() as conn:
             try:

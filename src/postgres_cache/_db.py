@@ -230,7 +230,7 @@ class DatabaseOperations:
                     with conn.cursor() as cur:
                         cur.execute(
                             self._sql.increment_item, 
-                            (key, value, utc_now, value, utc_now)
+                            (key, value, utc_now, value, value, utc_now)
                         )
                         row = cur.fetchone()
                 return int(row[0]) if row else value
@@ -540,6 +540,7 @@ class DatabaseOperations:
         Returns:
             Number of rows deleted.
         """
+        self.ensure_table_exists()
         utc_now = datetime.now(tz=timezone.utc)  # RISK-004
         with self._get_connection() as conn:
             try:

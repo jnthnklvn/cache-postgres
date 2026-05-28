@@ -75,7 +75,7 @@ class SqlQueries:
             f"  {COL_SLIDING_SECONDS}           BIGINT                    NULL,"
             f"  {COL_ABSOLUTE_EXPIRATION}       TIMESTAMPTZ               NULL,"
             f"  {COL_TAGS}                      TEXT[]                    NULL,"
-            f"  CONSTRAINT pk_{t} PRIMARY KEY ({COL_ID})"
+            f"  CONSTRAINT {_delimit_identifier('pk_' + table)} PRIMARY KEY ({COL_ID})"
             f");"
         )
 
@@ -87,7 +87,7 @@ class SqlQueries:
         )
 
         self.create_tags_index: str = (
-            f"CREATE INDEX IF NOT EXISTS ix_{t}_tags"
+            f"CREATE INDEX IF NOT EXISTS {_delimit_identifier('ix_' + table + '_tags')}"
             f"  ON {qualified} USING GIN ({COL_TAGS});"
         )
 
