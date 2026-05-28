@@ -35,6 +35,7 @@
   - [Distributed Locks](#distributed-locks)
 - [Thread & Async Safety](#thread--async-safety)
 - [Database Schema (DDL)](#database-schema-ddl)
+- [Interactive Demo (Docker Compose)](#interactive-demo-docker-compose)
 - [Development & Testing](#development--testing)
 - [License](#license)
 
@@ -408,6 +409,35 @@ CREATE INDEX IF NOT EXISTS ix_expiresattime
     ON public.cache (expiresattime)
     WITH (deduplicate_items = True);
 ```
+
+---
+
+## Interactive Demo (Docker Compose)
+
+We provide a complete, interactive FastAPI application running alongside a PostgreSQL database via Docker Compose. This allows you to explore all features (cache stampede protection, tag-based invalidations, failover resiliency, and atomic counters) in a live environment in just one command!
+
+### Running the Demo
+
+1. Navigate to the web demo directory:
+   ```bash
+   cd examples/web_demo
+   ```
+
+2. Start the services using Docker Compose:
+   ```bash
+   docker compose up --build
+   ```
+
+3. Open your browser and navigate to:
+   ```
+   http://localhost:8000
+   ```
+
+You will be greeted by a beautiful, interactive web dashboard where you can:
+* **Trigger concurrent request blasts** to visually see cache stampede protection in action.
+* **Test tag-based invalidations** by setting tagged keys and invalidating them.
+* **Simulate downstream service outages** and watch the `@failover` decorator instantly serve stale cache instead of failing.
+* **Increment page counters** atomically in PostgreSQL.
 
 ---
 
