@@ -29,11 +29,10 @@ import os
 import time
 import uuid
 import threading
-import concurrent.futures
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Generator
 
-import psycopg2
+import psycopg
 import pytest
 
 from postgres_cache import PostgresCache, PostgresCacheOptions, EntryOptions
@@ -48,7 +47,10 @@ SKIP_REASON = (
     "Set PGCACHE_TEST_DSN=postgresql://user:pass@host/db to enable."
 )
 
-pytestmark = pytest.mark.skipif(DSN is None, reason=SKIP_REASON)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(DSN is None, reason=SKIP_REASON),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +70,7 @@ def base_options(dsn: str) -> PostgresCacheOptions:
     """Shared options for all integration tests — creates table on first use."""
     return PostgresCacheOptions(
         dsn=dsn,
-        schema="public",
+        schema="pgcache_integration_tests",
         table="pgcache_integration_tests",
         create_if_not_exists=True,
         enable_expiration_scan=False,  # scanner disabled — tests control timing
@@ -89,13 +91,10 @@ def unique_key(prefix: str = "test") -> str:
 
 def raw_query(dsn: str, sql: str, params: tuple = ()) -> list:
     """Run a raw SQL query outside the cache library and return rows."""
-    conn = psycopg2.connect(dsn)
-    try:
+    with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
             return cur.fetchall()
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -535,16 +534,13 @@ class TestConnectionModes:
         """connection_factory mode: library must NOT call close() on returned connections."""
         close_calls = {"n": 0}
 
-        def tracked_factory():
-            conn = psycopg2.connect(base_options.dsn)
-            original_close = conn.close
-
-            def tracked_close():
+        class TrackedConnection(psycopg.Connection):
+            def close(self):
                 close_calls["n"] += 1
-                original_close()
+                super().close()
 
-            conn.close = tracked_close
-            return conn
+        def tracked_factory():
+            return TrackedConnection.connect(base_options.dsn)
 
         opts = PostgresCacheOptions(
             dsn=None,

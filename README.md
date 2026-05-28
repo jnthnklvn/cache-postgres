@@ -449,13 +449,22 @@ If you are developing this package, you can run tests locally.
 
 1. **Unit tests** (does not require a database):
    ```bash
-   pytest tests/unit/
+   python -m pytest tests/unit/
    ```
 
 2. **Integration tests** (requires a running PostgreSQL instance):
+   You can easily run integration tests against the PostgreSQL instance started via Docker Compose (`examples/web_demo`).
+   
+   **On Windows (PowerShell):**
+   ```powershell
+   $env:PGCACHE_TEST_DSN="postgresql://postgres:secretpassword@localhost:5432/cache_demo"
+   python -m pytest tests/integration/ -m integration
+   ```
+   
+   **On Linux / macOS (Bash):**
    ```bash
-   export PGCACHE_DSN="postgresql://postgres:postgres@localhost:5432/postgres"
-   pytest tests/integration/ -m integration
+   export PGCACHE_TEST_DSN="postgresql://postgres:secretpassword@localhost:5432/cache_demo"
+   python -m pytest tests/integration/ -m integration
    ```
 
 ---
