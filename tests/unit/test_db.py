@@ -102,7 +102,7 @@ class TestEnsureTableExists:
             db.ensure_table_exists()
             db.ensure_table_exists()  # Second call should be a no-op
             assert db._table_created is True
-            assert cur.execute.call_count == 3  # schema, table, index
+            assert cur.execute.call_count == 4  # schema, table, expires index, tags index
 
 
 class TestGet:

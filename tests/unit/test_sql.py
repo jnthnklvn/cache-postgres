@@ -175,9 +175,9 @@ class TestSetItem:
         upper = sql.set_item.upper()
         assert upper.strip().startswith("INSERT INTO")
 
-    def test_five_placeholders(self, sql: SqlQueries):
-        # Params: (key, value, expires_at, sliding_secs, abs_exp)
-        assert sql.set_item.count("%s") == 5
+    def test_six_placeholders(self, sql: SqlQueries):
+        # Params: (key, value, expires_at, sliding_secs, abs_exp, tags)
+        assert sql.set_item.count("%s") == 6
 
     def test_contains_all_columns(self, sql: SqlQueries):
         for col in ("id", "value", "expiresattime", "slidingexpirationinseconds", "absoluteexpiration"):

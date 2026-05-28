@@ -99,6 +99,35 @@ with PostgresCache(options) as cache:
     cache.delete_tags("products")
 ```
 
+## Bulk Operations
+
+Performant operations to interact with multiple keys in a single database round-trip.
+
+```python
+cache.set_many({
+    "key1": b"value1",
+    "key2": b"value2",
+})
+
+# Missing keys are omitted from the returned dictionary
+results = cache.get_many(["key1", "key2", "missing_key"])
+# {"key1": b"value1", "key2": b"value2"}
+
+cache.delete_many(["key1", "key2"])
+```
+
+## Pattern Matching
+
+Emulate Redis-like wildcard operations using standard SQL `LIKE` syntax natively.
+
+```python
+# Returns a dictionary of all matched keys
+results = cache.get_pattern("user:%")
+
+# Deletes all matched keys and returns the number of deleted items
+deleted_count = cache.delete_pattern("session:%")
+```
+
 ## Connection modes
 
 ```python

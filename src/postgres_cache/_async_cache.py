@@ -173,6 +173,40 @@ class AsyncPostgresCache:
         if tags:
             await self._db.delete_by_tags(list(tags))
 
+    async def get_many(self, keys: list[str]) -> dict[str, bytes]:
+        """Retrieve multiple cached values by their keys."""
+        for key in keys:
+            self._validate_key(key)
+        return await self._db.get_many(keys)
+
+    async def set_many(
+        self,
+        mapping: dict[str, bytes],
+        options: EntryOptions | None = None,
+    ) -> None:
+        """Store multiple values in the cache."""
+        for key in mapping:
+            self._validate_key(key)
+        await self._db.set_many(mapping, options)
+
+    async def delete_many(self, keys: list[str]) -> None:
+        """Physically delete multiple cache entries by their keys."""
+        for key in keys:
+            self._validate_key(key)
+        await self._db.delete_many(keys)
+
+    async def get_pattern(self, pattern: str) -> dict[str, bytes]:
+        """Retrieve all cached values whose keys match a SQL LIKE pattern."""
+        if not pattern:
+            raise ValueError("Pattern must not be empty.")
+        return await self._db.get_pattern(pattern)
+
+    async def delete_pattern(self, pattern: str) -> int:
+        """Physically delete all cache entries whose keys match a SQL LIKE pattern."""
+        if not pattern:
+            raise ValueError("Pattern must not be empty.")
+        return await self._db.delete_pattern(pattern)
+
     async def get_or_create(
         self,
         key: str,

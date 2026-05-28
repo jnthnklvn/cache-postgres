@@ -260,6 +260,70 @@ class PostgresCache:
         if tags:
             self._db.delete_by_tags(list(tags))
 
+    def get_many(self, keys: list[str]) -> dict[str, bytes]:
+        """Retrieve multiple cached values by their keys.
+        
+        Args:
+            keys: List of cache keys.
+            
+        Returns:
+            Dictionary mapping found keys to their byte values. Missing keys are omitted.
+        """
+        for key in keys:
+            self._validate_key(key)
+        return self._db.get_many(keys)
+
+    def set_many(
+        self,
+        mapping: dict[str, bytes],
+        options: EntryOptions | None = None,
+    ) -> None:
+        """Store multiple values in the cache.
+        
+        Args:
+            mapping: Dictionary of key-value pairs to store.
+            options: Per-entry TTL options applied to all items.
+        """
+        for key in mapping:
+            self._validate_key(key)
+        self._db.set_many(mapping, options)
+
+    def delete_many(self, keys: list[str]) -> None:
+        """Physically delete multiple cache entries by their keys.
+        
+        Args:
+            keys: List of cache keys to delete.
+        """
+        for key in keys:
+            self._validate_key(key)
+        self._db.delete_many(keys)
+
+    def get_pattern(self, pattern: str) -> dict[str, bytes]:
+        """Retrieve all cached values whose keys match a SQL LIKE pattern.
+        
+        Args:
+            pattern: SQL LIKE pattern (e.g., 'user:%').
+            
+        Returns:
+            Dictionary mapping found keys to their byte values.
+        """
+        if not pattern:
+            raise ValueError("Pattern must not be empty.")
+        return self._db.get_pattern(pattern)
+
+    def delete_pattern(self, pattern: str) -> int:
+        """Physically delete all cache entries whose keys match a SQL LIKE pattern.
+        
+        Args:
+            pattern: SQL LIKE pattern (e.g., 'user:%').
+            
+        Returns:
+            Number of deleted entries.
+        """
+        if not pattern:
+            raise ValueError("Pattern must not be empty.")
+        return self._db.delete_pattern(pattern)
+
     def get_or_create(
         self,
         key: str,

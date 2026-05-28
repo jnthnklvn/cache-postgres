@@ -98,7 +98,7 @@ class TestPostgresCacheOptionsInvalid:
 
     def test_both_dsn_and_factory_raises(self):
         """BR-MIGRAR-010: providing both is ambiguous."""
-        with pytest.raises(ValueError, match="not both"):
+        with pytest.raises(ValueError, match="exactly one"):
             PostgresCacheOptions(
                 dsn="postgresql://localhost/db",
                 connection_factory=lambda: object(),

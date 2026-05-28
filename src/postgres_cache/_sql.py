@@ -191,7 +191,7 @@ class SqlQueries:
         )
 
         # ------------------------------------------------------------------
-        # get_or_create double-check (after acquiring advisory lock)
+        # get_item_after_lock double-check (after acquiring advisory lock)
         #
         # Re-reads the entry after obtaining the lock — another worker may
         # have already created it. No sliding expiration renewal on this read
@@ -202,4 +202,64 @@ class SqlQueries:
             f"SELECT {COL_VALUE} FROM {qualified}"
             f" WHERE {COL_ID} = %s"
             f"   AND {COL_EXPIRES_AT} >= %s;"
+        )
+
+        # ------------------------------------------------------------------
+        # get_many_items
+        #
+        # Renews sliding expiration on read via UPDATE + RETURNING.
+        # Params: (utcNow, keys_array, utcNow)
+        # ------------------------------------------------------------------
+        self.get_many_items: str = (
+            f"UPDATE {qualified}"
+            f" SET {COL_EXPIRES_AT} = CASE"
+            f"     WHEN {COL_SLIDING_SECONDS} IS NOT NULL"
+            f"     THEN LEAST("
+            f"         %s + ({COL_SLIDING_SECONDS} * INTERVAL '1 second'),"
+            f"         COALESCE({COL_ABSOLUTE_EXPIRATION}, 'infinity'::timestamptz)"
+            f"     )"
+            f"     ELSE {COL_EXPIRES_AT}"
+            f" END"
+            f" WHERE {COL_ID} = ANY(%s::varchar(449)[])"
+            f"   AND {COL_EXPIRES_AT} >= %s"
+            f" RETURNING {COL_ID}, {COL_VALUE};"
+        )
+
+        # ------------------------------------------------------------------
+        # delete_many_items
+        #
+        # Params: (keys_array,)
+        # ------------------------------------------------------------------
+        self.delete_many_items: str = (
+            f"DELETE FROM {qualified} WHERE {COL_ID} = ANY(%s::varchar(449)[]);"
+        )
+
+        # ------------------------------------------------------------------
+        # get_by_pattern
+        #
+        # Renews sliding expiration on read via UPDATE + RETURNING.
+        # Params: (utcNow, pattern, utcNow)
+        # ------------------------------------------------------------------
+        self.get_by_pattern: str = (
+            f"UPDATE {qualified}"
+            f" SET {COL_EXPIRES_AT} = CASE"
+            f"     WHEN {COL_SLIDING_SECONDS} IS NOT NULL"
+            f"     THEN LEAST("
+            f"         %s + ({COL_SLIDING_SECONDS} * INTERVAL '1 second'),"
+            f"         COALESCE({COL_ABSOLUTE_EXPIRATION}, 'infinity'::timestamptz)"
+            f"     )"
+            f"     ELSE {COL_EXPIRES_AT}"
+            f" END"
+            f" WHERE {COL_ID} LIKE %s"
+            f"   AND {COL_EXPIRES_AT} >= %s"
+            f" RETURNING {COL_ID}, {COL_VALUE};"
+        )
+
+        # ------------------------------------------------------------------
+        # delete_by_pattern
+        #
+        # Params: (pattern,)
+        # ------------------------------------------------------------------
+        self.delete_by_pattern: str = (
+            f"DELETE FROM {qualified} WHERE {COL_ID} LIKE %s;"
         )

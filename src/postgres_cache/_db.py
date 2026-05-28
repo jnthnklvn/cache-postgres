@@ -295,6 +295,114 @@ class DatabaseOperations:
                 raise
 
     # ------------------------------------------------------------------
+    # Bulk Operations
+    # ------------------------------------------------------------------
+
+    def get_many(self, keys: list[str]) -> dict[str, bytes]:
+        """Retrieve multiple cache values by key in a single round-trip."""
+        self.ensure_table_exists()
+        if not keys:
+            return {}
+        utc_now = datetime.now(tz=timezone.utc)
+        
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.get_many_items, (utc_now, keys, utc_now))
+                        rows = cur.fetchall()
+                return {row[0]: row[1] for row in rows}
+            except Exception:
+                logger.exception("get_many(%r) failed.", keys)
+                raise
+
+    def set_many(self, mapping: dict[str, bytes], options: EntryOptions | None = None) -> None:
+        """Insert or update multiple cache entries in a single round-trip."""
+        self.ensure_table_exists()
+        if not mapping:
+            return
+        utc_now = datetime.now(tz=timezone.utc)
+
+        if options is None:
+            options = EntryOptions(
+                sliding_expiration=self._options.default_sliding_expiration
+            )
+
+        sliding_secs = options.resolve_sliding_seconds()
+        abs_exp = options.resolve_expires_at(now=utc_now)
+
+        if sliding_secs is not None:
+            from datetime import timedelta
+            expires_at = utc_now + timedelta(seconds=sliding_secs)
+            if abs_exp is not None and abs_exp < expires_at:
+                expires_at = abs_exp
+        elif abs_exp is not None:
+            expires_at = abs_exp
+        else:
+            from datetime import timedelta
+            expires_at = utc_now + timedelta(days=365 * 100)
+
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        params = [
+                            (key, value, expires_at, sliding_secs, abs_exp, options.tags)
+                            for key, value in mapping.items()
+                        ]
+                        cur.executemany(self._sql.set_item, params)
+            except Exception:
+                logger.exception("set_many() failed.")
+                raise
+
+    def delete_many(self, keys: list[str]) -> None:
+        """Physically delete multiple cache entries by key in a single round-trip."""
+        self.ensure_table_exists()
+        if not keys:
+            return
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.delete_many_items, (keys,))
+            except Exception:
+                logger.exception("delete_many(%r) failed.", keys)
+                raise
+
+    # ------------------------------------------------------------------
+    # Pattern Matching
+    # ------------------------------------------------------------------
+
+    def get_pattern(self, pattern: str) -> dict[str, bytes]:
+        """Retrieve cache values matching a SQL LIKE pattern."""
+        self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+        
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.get_by_pattern, (utc_now, pattern, utc_now))
+                        rows = cur.fetchall()
+                return {row[0]: row[1] for row in rows}
+            except Exception:
+                logger.exception("get_pattern(%r) failed.", pattern)
+                raise
+
+    def delete_pattern(self, pattern: str) -> int:
+        """Delete cache entries matching a SQL LIKE pattern."""
+        self.ensure_table_exists()
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.delete_by_pattern, (pattern,))
+                        return cur.rowcount
+            except Exception:
+                logger.exception("delete_pattern(%r) failed.", pattern)
+                raise
+
+    # ------------------------------------------------------------------
     # delete_expired — BR-MIGRAR-018 (background scanner)
     # ------------------------------------------------------------------
 

@@ -164,6 +164,71 @@ class TestGetOrCreate:
 
 
 # ===========================================================================
+# Bulk Operations
+# ===========================================================================
+
+class TestBulkOperations:
+    @pytest.mark.anyio
+    async def test_get_many_delegates_to_db(self):
+        cache, mock_db = make_cache()
+        mock_db.get_many.return_value = {"k1": b"v1"}
+        assert await cache.get_many(["k1", "k2"]) == {"k1": b"v1"}
+        mock_db.get_many.assert_called_once_with(["k1", "k2"])
+
+    @pytest.mark.anyio
+    async def test_set_many_delegates_to_db(self):
+        cache, mock_db = make_cache()
+        opts = EntryOptions(sliding_expiration=timedelta(minutes=10))
+        await cache.set_many({"k1": b"v1"}, opts)
+        mock_db.set_many.assert_called_once_with({"k1": b"v1"}, opts)
+
+    @pytest.mark.anyio
+    async def test_delete_many_delegates_to_db(self):
+        cache, mock_db = make_cache()
+        await cache.delete_many(["k1", "k2"])
+        mock_db.delete_many.assert_called_once_with(["k1", "k2"])
+
+    @pytest.mark.anyio
+    async def test_key_validation_in_bulk(self):
+        cache, _ = make_cache()
+        bad_key = "x" * (_MAX_KEY_LENGTH + 1)
+        with pytest.raises(ValueError):
+            await cache.get_many(["ok", bad_key])
+        with pytest.raises(ValueError):
+            await cache.set_many({"ok": b"v", bad_key: b"v"})
+        with pytest.raises(ValueError):
+            await cache.delete_many(["ok", bad_key])
+
+
+# ===========================================================================
+# Pattern Matching
+# ===========================================================================
+
+class TestPatternMatching:
+    @pytest.mark.anyio
+    async def test_get_pattern_delegates_to_db(self):
+        cache, mock_db = make_cache()
+        mock_db.get_pattern.return_value = {"user:1": b"v1"}
+        assert await cache.get_pattern("user:%") == {"user:1": b"v1"}
+        mock_db.get_pattern.assert_called_once_with("user:%")
+
+    @pytest.mark.anyio
+    async def test_delete_pattern_delegates_to_db(self):
+        cache, mock_db = make_cache()
+        mock_db.delete_pattern.return_value = 5
+        assert await cache.delete_pattern("user:%") == 5
+        mock_db.delete_pattern.assert_called_once_with("user:%")
+
+    @pytest.mark.anyio
+    async def test_empty_pattern_raises(self):
+        cache, _ = make_cache()
+        with pytest.raises(ValueError, match="empty"):
+            await cache.get_pattern("")
+        with pytest.raises(ValueError, match="empty"):
+            await cache.delete_pattern("")
+
+
+# ===========================================================================
 # Context manager
 # ===========================================================================
 
