@@ -1,0 +1,272 @@
+"""
+Async Database access layer for postgres-cache.
+"""
+
+from __future__ import annotations
+
+import logging
+import asyncio
+from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from typing import Callable, AsyncIterator, Awaitable
+
+import psycopg
+from psycopg_pool import AsyncConnectionPool
+
+from ._options import EntryOptions, PostgresCacheOptions
+from ._sql import SqlQueries
+
+logger = logging.getLogger(__name__)
+
+
+class AsyncDatabaseOperations:
+    """All direct interactions with PostgreSQL via psycopg3 async API.
+
+    Instantiated internally by AsyncPostgresCache — never by library consumers.
+    Manages connections, DDL, CRUD, advisory lock, and expiration scan asynchronously.
+    """
+
+    def __init__(self, options: PostgresCacheOptions, sql: SqlQueries) -> None:
+        """
+        Args:
+            options: Validated PostgresCacheOptions.
+            sql:     Pre-formatted SqlQueries for this schema/table pair.
+        """
+        self._options = options
+        self._sql = sql
+
+        # Double-checked locking for DDL
+        self._table_created: bool = False
+        self._ddl_lock: asyncio.Lock = asyncio.Lock()
+
+        # Connection Pool
+        self._pool: AsyncConnectionPool | None = None
+        if self._options.async_connection_factory is None and self._options.dsn:
+            self._pool = AsyncConnectionPool(
+                conninfo=self._options.dsn,
+                min_size=self._options.pool_min_size,
+                max_size=self._options.pool_max_size,
+                open=False,
+            )
+
+    async def close(self) -> None:
+        """Close the connection pool if managed by the library."""
+        if self._pool is not None:
+            await self._pool.close()
+
+    @asynccontextmanager
+    async def _get_connection(self) -> AsyncIterator[psycopg.AsyncConnection]:
+        """Yield an async connection from the pool or the factory."""
+        if self._pool is not None:
+            await self._pool.open(wait=True)
+            async with self._pool.connection() as conn:
+                yield conn
+        else:
+            conn = await self._options.async_connection_factory()
+            try:
+                yield conn
+            finally:
+                pass  # Do not close factory connections
+
+    async def ensure_table_exists(self) -> None:
+        """Create the cache table and index if they do not exist yet."""
+        if not self._options.create_if_not_exists:
+            return
+        if self._table_created:
+            return
+        async with self._ddl_lock:
+            if self._table_created:
+                return
+            async with self._get_connection() as conn:
+                try:
+                    async with conn.transaction():
+                        async with conn.cursor() as cur:
+                            await cur.execute(self._sql.create_schema)
+                            await cur.execute(self._sql.create_table)
+                            await cur.execute(self._sql.create_index)
+                            await cur.execute(self._sql.create_tags_index)
+                    self._table_created = True
+                    logger.debug(
+                        "Cache table '%s.%s' ensured.",
+                        self._options.schema,
+                        self._options.table,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to create cache table '%s.%s'.",
+                        self._options.schema,
+                        self._options.table,
+                    )
+                    raise
+
+    async def get(self, key: str) -> bytes | None:
+        """Retrieve a cache value by key, renewing sliding expiration atomically."""
+        await self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(self._sql.get_item, (utc_now, key, utc_now))
+                        row = await cur.fetchone()
+                return row[0] if row else None
+            except Exception:
+                logger.exception("get(%r) failed.", key)
+                raise
+
+    async def set(
+        self,
+        key: str,
+        value: bytes,
+        options: EntryOptions | None = None,
+    ) -> None:
+        """Insert or update a cache entry (UPSERT via CTE ON CONFLICT)."""
+        await self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+
+        if options is None:
+            options = EntryOptions(
+                sliding_expiration=self._options.default_sliding_expiration
+            )
+
+        sliding_secs = options.resolve_sliding_seconds()
+        abs_exp = options.resolve_expires_at(now=utc_now)
+
+        if sliding_secs is not None:
+            from datetime import timedelta
+            expires_at = utc_now + timedelta(seconds=sliding_secs)
+            if abs_exp is not None and abs_exp < expires_at:
+                expires_at = abs_exp
+        elif abs_exp is not None:
+            expires_at = abs_exp
+        else:
+            from datetime import timedelta
+            expires_at = utc_now + timedelta(days=365 * 100)
+
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            self._sql.set_item,
+                            (key, value, expires_at, sliding_secs, abs_exp, options.tags),
+                        )
+            except Exception:
+                logger.exception("set(%r) failed.", key)
+                raise
+
+    async def refresh(self, key: str) -> None:
+        """Renew the sliding expiration of a cache entry without returning its value."""
+        await self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(self._sql.refresh_item, (utc_now, key, utc_now))
+            except Exception:
+                logger.exception("refresh(%r) failed.", key)
+                raise
+
+    async def remove(self, key: str) -> None:
+        """Physically delete a cache entry by key."""
+        await self.ensure_table_exists()
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(self._sql.remove_item, (key,))
+            except Exception:
+                logger.exception("remove(%r) failed.", key)
+                raise
+
+    async def delete_by_tags(self, tags: list[str]) -> None:
+        """Physically delete all cache entries that contain the specified tags."""
+        if not tags:
+            return
+            
+        await self.ensure_table_exists()
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(self._sql.delete_by_tags, (tags,))
+            except Exception:
+                logger.exception("delete_by_tags(%r) failed.", tags)
+                raise
+
+    async def delete_expired(self) -> int:
+        """Delete all expired entries in a single batch statement."""
+        utc_now = datetime.now(tz=timezone.utc)
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(self._sql.delete_expired, (utc_now,))
+                        count = cur.rowcount
+                if count > 0:
+                    logger.debug("Deleted %d expired cache entries.", count)
+                return count
+            except Exception:
+                logger.exception("delete_expired() failed.")
+                raise
+
+    async def get_or_create(
+        self,
+        key: str,
+        factory: Callable[[], Awaitable[bytes]],
+        options: EntryOptions | None = None,
+    ) -> bytes:
+        """Get a value by key, or call factory() exactly once if absent."""
+        await self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+
+        async with self._get_connection() as conn:
+            try:
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        # Step 1: acquire advisory lock (blocks until available)
+                        await cur.execute(self._sql.advisory_lock, (key,))
+
+                        # Step 2: double-check after acquiring lock
+                        await cur.execute(self._sql.get_item_after_lock, (key, utc_now))
+                        row = await cur.fetchone()
+
+                    if row is not None:
+                        # Another worker already populated the entry
+                        return row[0]
+
+                    # Step 3: cache miss even after lock — call factory once
+                    value = await factory()
+
+                    # Step 4: store the computed value
+                    async with conn.cursor() as cur:
+                        options = options or EntryOptions(
+                            sliding_expiration=self._options.default_sliding_expiration
+                        )
+                        sliding_secs = options.resolve_sliding_seconds()
+                        abs_exp = options.resolve_expires_at(now=utc_now)
+                        
+                        if sliding_secs is not None:
+                            from datetime import timedelta
+                            expires_at = utc_now + timedelta(seconds=sliding_secs)
+                            if abs_exp is not None and abs_exp < expires_at:
+                                expires_at = abs_exp
+                        elif abs_exp is not None:
+                            expires_at = abs_exp
+                        else:
+                            from datetime import timedelta
+                            expires_at = utc_now + timedelta(days=365 * 100)
+
+                        await cur.execute(
+                            self._sql.set_item,
+                            (key, value, expires_at, sliding_secs, abs_exp, options.tags),
+                        )
+
+                    return value
+
+            except Exception:
+                logger.exception("get_or_create(%r) failed.", key)
+                raise

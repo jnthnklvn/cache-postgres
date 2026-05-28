@@ -11,7 +11,7 @@ pip install postgres-cache
 ## Quick Start
 
 ```python
-from postgres_cache import PostgresCache, PostgresCacheOptions
+from postgres_cache import PostgresCache, AsyncPostgresCache, PostgresCacheOptions
 
 options = PostgresCacheOptions(
     dsn="postgresql://user:password@localhost:5432/mydb",
@@ -31,6 +31,12 @@ with PostgresCache(options) as cache:
 with PostgresCache(options) as cache:
     value = cache.get_or_create("my-key", lambda: b"computed-value")
 
+# Fully asynchronous support is also available
+async def main():
+    async with AsyncPostgresCache(options) as cache:
+        await cache.set("my-key", b"my-value")
+        value = await cache.get("my-key")
+
 # Decorator API for synchronous functions
 with PostgresCache(options) as cache:
     @cache.cached(key="user:{user_id}", ttl="10m", tags=["users"])
@@ -38,6 +44,15 @@ with PostgresCache(options) as cache:
         return {"id": user_id, "name": f"User {user_id}"}
         
     user = get_user(1) # Fetched and cached
+
+# Decorator API for asynchronous functions
+async def setup_async():
+    async with AsyncPostgresCache(options) as cache:
+        @cache.cached(key="async_user:{user_id}", ttl="10m", tags=["users"])
+        async def get_user_async(user_id: int):
+            return {"id": user_id, "name": f"Async User {user_id}"}
+            
+        user = await get_user_async(1)
 ```
 
 ## Configuration
@@ -96,10 +111,21 @@ options = PostgresCacheOptions(
     table="cache"
 )
 
-# Mode 2: connection factory (you control the connection or pool)
+# Mode 2: synchronous connection factory
 import psycopg
 options = PostgresCacheOptions(
     connection_factory=lambda: psycopg.connect("postgresql://..."),
+    schema="public",
+    table="cache",
+)
+
+# Mode 3: asynchronous connection factory (used exclusively by AsyncPostgresCache)
+import psycopg
+async def make_conn():
+    return await psycopg.AsyncConnection.connect("postgresql://...")
+
+options = PostgresCacheOptions(
+    async_connection_factory=make_conn,
     schema="public",
     table="cache",
 )

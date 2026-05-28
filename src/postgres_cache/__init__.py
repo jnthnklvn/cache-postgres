@@ -31,10 +31,12 @@ Spec: _reversa_sdd/migration/topology_decision.md § Implicações para a Fase 2
 """
 
 from ._cache import PostgresCache
+from ._async_cache import AsyncPostgresCache
 from ._options import EntryOptions, PostgresCacheOptions
 
 __all__ = [
     "PostgresCache",
+    "AsyncPostgresCache",
     "PostgresCacheOptions",
     "EntryOptions",
 ]

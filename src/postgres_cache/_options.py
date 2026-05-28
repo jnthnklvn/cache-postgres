@@ -69,6 +69,11 @@ class PostgresCacheOptions:
     The library does **not** call ``close()`` on returned connections.
     """
 
+    async_connection_factory: Callable[[], object] | None = None
+    """Callable returning an awaitable psycopg.AsyncConnection.
+    Used exclusively by AsyncPostgresCache.
+    """
+
     pool_min_size: int = 1
     """Minimum number of connections in the ConnectionPool (used with dsn)."""
 
@@ -143,18 +148,21 @@ class PostgresCacheOptions:
     # ------------------------------------------------------------------
 
     def _validate_connection(self) -> None:
-        """Exactly one of dsn or connection_factory must be provided.
+        """Exactly one of dsn, connection_factory, or async_connection_factory must be provided.
 
         Spec: target_domain_model.md § Modos de conexão (BR-MIGRAR-010)
         """
-        if self.dsn is None and self.connection_factory is None:
+        sources = sum(
+            1 for x in (self.dsn, self.connection_factory, self.async_connection_factory) if x is not None
+        )
+        if sources == 0:
             raise ValueError(
-                "PostgresCacheOptions requires either 'dsn' or 'connection_factory'. "
-                "Provide a DSN string or a callable that returns a psycopg connection."
+                "PostgresCacheOptions requires exactly one connection source. "
+                "Provide 'dsn', 'connection_factory', or 'async_connection_factory'."
             )
-        if self.dsn is not None and self.connection_factory is not None:
+        if sources > 1:
             raise ValueError(
-                "Provide either 'dsn' or 'connection_factory', not both."
+                "Provide exactly one of 'dsn', 'connection_factory', or 'async_connection_factory'."
             )
 
     def _validate_schema_table(self) -> None:

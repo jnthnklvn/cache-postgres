@@ -1,0 +1,212 @@
+"""
+Async Public cache facade for postgres-cache.
+"""
+
+from __future__ import annotations
+
+import logging
+import asyncio
+import functools
+import inspect
+import pickle
+from datetime import timedelta
+from typing import Callable, Awaitable
+
+from ._async_db import AsyncDatabaseOperations
+from ._options import EntryOptions, PostgresCacheOptions
+from ._sql import SqlQueries
+
+logger = logging.getLogger(__name__)
+
+#: Maximum allowed key length
+_MAX_KEY_LENGTH: int = 449
+
+
+class AsyncPostgresCache:
+    """Distributed async cache backed by PostgreSQL.
+
+    Main public interface for asynchronous applications.
+    """
+
+    def __init__(self, options: PostgresCacheOptions) -> None:
+        """
+        Args:
+            options: Validated PostgresCacheOptions. Use PostgresCacheOptions(...)
+                     to build and validate configuration before passing here.
+        """
+        self._options = options
+        self._sql = SqlQueries(
+            schema=options.schema,
+            table=options.table,
+            use_wal=options.use_wal,
+        )
+        self._db = AsyncDatabaseOperations(options=options, sql=self._sql)
+
+        # Scanner task state
+        self._stop_event: asyncio.Event = asyncio.Event()
+        self._scanner_task: asyncio.Task | None = None
+
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+
+    async def __aenter__(self) -> "AsyncPostgresCache":
+        """Start the background expiration scanner and return self."""
+        self._start_scanner()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Stop the background scanner gracefully."""
+        await self.close()
+        return None
+
+    async def close(self) -> None:
+        """Stop the background expiration scanner task gracefully.
+
+        Signals the scanner to stop and waits for it to terminate (up to 5 s).
+        Safe to call multiple times.
+        """
+        self._stop_event.set()
+        if self._scanner_task is not None and not self._scanner_task.done():
+            try:
+                await asyncio.wait_for(self._scanner_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Scanner task did not stop within 5 seconds, cancelling.")
+                self._scanner_task.cancel()
+            except asyncio.CancelledError:
+                pass
+        self._scanner_task = None
+        
+        # Ensure database connection pool is closed
+        await self._db.close()
+
+    # ------------------------------------------------------------------
+    # Scanner task
+    # ------------------------------------------------------------------
+
+    def _start_scanner(self) -> None:
+        """Start the background expiration scanner task."""
+        if not self._options.enable_expiration_scan:
+            logger.debug("Expiration scanner is disabled (enable_expiration_scan=False).")
+            return
+        if self._scanner_task is not None and not self._scanner_task.done():
+            return
+            
+        self._stop_event.clear()
+        
+        loop = asyncio.get_running_loop()
+        self._scanner_task = loop.create_task(self._scanner_loop(), name="postgres-cache-scanner")
+        logger.debug("Expiration scanner started (interval=%s).", self._options.expiration_scan_interval)
+
+    async def _scanner_loop(self) -> None:
+        """Background loop: delete expired entries at the configured interval."""
+        interval_seconds = self._options.expiration_scan_interval.total_seconds()
+        
+        while not self._stop_event.is_set():
+            try:
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=interval_seconds)
+                    break  # Event was set, stop scanning
+                except asyncio.TimeoutError:
+                    pass  # Timeout reached, do a scan
+                
+                if self._stop_event.is_set():
+                    break
+                    
+                count = await self._db.delete_expired()
+                if count > 0:
+                    logger.debug("Scanner deleted %d expired entries.", count)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception(
+                    "Expiration scanner encountered an error. "
+                    "Continuing — next scan in %s.",
+                    self._options.expiration_scan_interval,
+                )
+
+    # ------------------------------------------------------------------
+    # Key validation
+    # ------------------------------------------------------------------
+
+    def _validate_key(self, key: str) -> None:
+        """Reject keys longer than 449 characters."""
+        if not key:
+            raise ValueError("Cache key must not be empty.")
+        if len(key) > _MAX_KEY_LENGTH:
+            raise ValueError(
+                f"Cache key exceeds maximum length of {_MAX_KEY_LENGTH} characters "
+                f"(got {len(key)})."
+            )
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def get(self, key: str) -> bytes | None:
+        """Retrieve a cached value by key."""
+        self._validate_key(key)
+        return await self._db.get(key)
+
+    async def set(
+        self,
+        key: str,
+        value: bytes,
+        options: EntryOptions | None = None,
+    ) -> None:
+        """Store a value in the cache (insert or update)."""
+        self._validate_key(key)
+        await self._db.set(key, value, options)
+
+    async def refresh(self, key: str) -> None:
+        """Renew the sliding expiration of an entry without returning its value."""
+        self._validate_key(key)
+        await self._db.refresh(key)
+
+    async def remove(self, key: str) -> None:
+        """Physically delete a cache entry by key."""
+        self._validate_key(key)
+        await self._db.remove(key)
+
+    async def delete_tags(self, *tags: str) -> None:
+        """Physically delete all cache entries that contain all of the specified tags."""
+        if tags:
+            await self._db.delete_by_tags(list(tags))
+
+    async def get_or_create(
+        self,
+        key: str,
+        factory: Callable[[], Awaitable[bytes]],
+        options: EntryOptions | None = None,
+    ) -> bytes:
+        """Retrieve a cached value, or compute and store it if absent."""
+        self._validate_key(key)
+        return await self._db.get_or_create(key, factory, options)
+
+    def cached(
+        self,
+        key: str,
+        ttl: str | timedelta | None = None,
+        tags: list[str] | None = None,
+    ) -> Callable:
+        """Decorator to cache the result of an asynchronous function."""
+        def decorator(func: Callable) -> Callable:
+            sig = inspect.signature(func)
+
+            @functools.wraps(func)
+            async def wrapper(*args, **kwargs):
+                bound_args = sig.bind(*args, **kwargs)
+                bound_args.apply_defaults()
+                resolved_key = key.format(**bound_args.arguments)
+                self._validate_key(resolved_key)
+
+                async def factory() -> bytes:
+                    result = await func(*args, **kwargs)
+                    return pickle.dumps(result)
+
+                options = EntryOptions(sliding_expiration=ttl, tags=tags)
+                cached_bytes = await self.get_or_create(resolved_key, factory, options)
+                return pickle.loads(cached_bytes)
+
+            return wrapper
+        return decorator
