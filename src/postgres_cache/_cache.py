@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timezone
+import functools
+import inspect
+import pickle
+from datetime import timedelta
 from typing import Callable
 
 from ._db import DatabaseOperations
@@ -248,6 +251,15 @@ class PostgresCache:
         self._validate_key(key)
         self._db.remove(key)
 
+    def delete_tags(self, *tags: str) -> None:
+        """Physically delete all cache entries that contain all of the specified tags.
+
+        Args:
+            *tags: Tags to match.
+        """
+        if tags:
+            self._db.delete_by_tags(list(tags))
+
     def get_or_create(
         self,
         key: str,
@@ -275,3 +287,37 @@ class PostgresCache:
         """
         self._validate_key(key)
         return self._db.get_or_create(key, factory, options)
+
+    def cached(
+        self,
+        key: str,
+        ttl: str | timedelta | None = None,
+        tags: list[str] | None = None,
+    ) -> Callable:
+        """Decorator to cache the result of a synchronous function.
+
+        Args:
+            key: Format string for the cache key, e.g. "user:{user_id}".
+            ttl: Time-to-live for the cache entry. Can be a timedelta or a duration string like "10m".
+            tags: Optional list of tags for group invalidation.
+        """
+        def decorator(func: Callable) -> Callable:
+            sig = inspect.signature(func)
+
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                bound_args = sig.bind(*args, **kwargs)
+                bound_args.apply_defaults()
+                resolved_key = key.format(**bound_args.arguments)
+                self._validate_key(resolved_key)
+
+                def factory() -> bytes:
+                    result = func(*args, **kwargs)
+                    return pickle.dumps(result)
+
+                options = EntryOptions(sliding_expiration=ttl, tags=tags)
+                cached_bytes = self.get_or_create(resolved_key, factory, options)
+                return pickle.loads(cached_bytes)
+
+            return wrapper
+        return decorator

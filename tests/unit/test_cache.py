@@ -9,11 +9,10 @@ Spec: _reversa_sdd/migration/target_architecture.md § BC-1, DA-03, DA-04
       _reversa_sdd/migration/risk_register.md § RISK-003
 """
 
-import threading
 import time
 import pytest
 from datetime import timedelta
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from postgres_cache._cache import PostgresCache, _MAX_KEY_LENGTH
 from postgres_cache._options import EntryOptions, PostgresCacheOptions

@@ -22,6 +22,7 @@ COL_VALUE = "value"
 COL_EXPIRES_AT = "expiresattime"
 COL_SLIDING_SECONDS = "slidingexpirationinseconds"
 COL_ABSOLUTE_EXPIRATION = "absoluteexpiration"
+COL_TAGS = "tags"
 
 
 def _delimit_identifier(name: str) -> str:
@@ -73,6 +74,7 @@ class SqlQueries:
             f"  {COL_EXPIRES_AT}                TIMESTAMPTZ               NOT NULL,"
             f"  {COL_SLIDING_SECONDS}           BIGINT                    NULL,"
             f"  {COL_ABSOLUTE_EXPIRATION}       TIMESTAMPTZ               NULL,"
+            f"  {COL_TAGS}                      TEXT[]                    NULL,"
             f"  CONSTRAINT pk_{t} PRIMARY KEY ({COL_ID})"
             f");"
         )
@@ -82,6 +84,11 @@ class SqlQueries:
             f"CREATE INDEX IF NOT EXISTS ix_{COL_EXPIRES_AT}"
             f"  ON {qualified} ({COL_EXPIRES_AT})"
             f"  WITH (deduplicate_items = True);"
+        )
+
+        self.create_tags_index: str = (
+            f"CREATE INDEX IF NOT EXISTS ix_{t}_tags"
+            f"  ON {qualified} USING GIN ({COL_TAGS});"
         )
 
         # ------------------------------------------------------------------
@@ -110,18 +117,19 @@ class SqlQueries:
         # set — BR-MIGRAR-007 (UPSERT via CTE ON CONFLICT)
         #
         # Atomic upsert — no race between concurrent INSERT and UPDATE.
-        # Params: (key, value, expires_at, sliding_secs_or_None, abs_exp_or_None)
+        # Params: (key, value, expires_at, sliding_secs_or_None, abs_exp_or_None, tags_array)
         # ------------------------------------------------------------------
         self.set_item: str = (
             f"INSERT INTO {qualified}"
             f"  ({COL_ID}, {COL_VALUE}, {COL_EXPIRES_AT},"
-            f"   {COL_SLIDING_SECONDS}, {COL_ABSOLUTE_EXPIRATION})"
-            f" VALUES (%s::varchar(449), %s::bytea, %s::timestamptz, %s::bigint, %s::timestamptz)"
+            f"   {COL_SLIDING_SECONDS}, {COL_ABSOLUTE_EXPIRATION}, {COL_TAGS})"
+            f" VALUES (%s::varchar(449), %s::bytea, %s::timestamptz, %s::bigint, %s::timestamptz, %s::text[])"
             f" ON CONFLICT ({COL_ID}) DO UPDATE SET"
             f"   {COL_VALUE}               = EXCLUDED.{COL_VALUE},"
             f"   {COL_EXPIRES_AT}          = EXCLUDED.{COL_EXPIRES_AT},"
             f"   {COL_SLIDING_SECONDS}     = EXCLUDED.{COL_SLIDING_SECONDS},"
-            f"   {COL_ABSOLUTE_EXPIRATION} = EXCLUDED.{COL_ABSOLUTE_EXPIRATION};"
+            f"   {COL_ABSOLUTE_EXPIRATION} = EXCLUDED.{COL_ABSOLUTE_EXPIRATION},"
+            f"   {COL_TAGS}                = EXCLUDED.{COL_TAGS};"
         )
 
         # ------------------------------------------------------------------
@@ -159,6 +167,16 @@ class SqlQueries:
         # ------------------------------------------------------------------
         self.delete_expired: str = (
             f"DELETE FROM {qualified} WHERE {COL_EXPIRES_AT} < %s;"
+        )
+
+        # ------------------------------------------------------------------
+        # delete_by_tags
+        #
+        # Deletes all cache entries that contain ALL of the specified tags.
+        # Params: (tags_array,)
+        # ------------------------------------------------------------------
+        self.delete_by_tags: str = (
+            f"DELETE FROM {qualified} WHERE {COL_TAGS} @> %s::text[];"
         )
 
         # ------------------------------------------------------------------

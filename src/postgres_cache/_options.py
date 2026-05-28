@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
+from ._utils import parse_duration
+
 
 #: Minimum allowed scanner interval — BR-MIGRAR-001
 _MIN_SCAN_INTERVAL: timedelta = timedelta(minutes=5)
@@ -204,9 +206,10 @@ class EntryOptions:
     Spec: target_domain_model.md § Value Objects § EntryOptions
     """
 
-    sliding_expiration: timedelta | None = None
+    sliding_expiration: timedelta | str | None = None
     """Sliding window that resets on each access.
     Equivalent to SlidingExpiration in DistributedCacheEntryOptions.
+    Can be a timedelta or a duration string like '10m'.
     """
 
     absolute_expiration: datetime | None = None
@@ -215,11 +218,15 @@ class EntryOptions:
     RISK-004: must be tz-aware (timezone.utc). Naive datetimes raise ValueError.
     """
 
-    absolute_expiration_relative: timedelta | None = None
+    absolute_expiration_relative: timedelta | str | None = None
     """Hard cutoff as a duration from now.
     Equivalent to AbsoluteExpirationRelativeToNow.
+    Can be a timedelta or a duration string like '2h'.
     Converted to absolute time at the moment of the set() call.
     """
+
+    tags: list[str] | None = None
+    """List of tags for group invalidation."""
 
     def __post_init__(self) -> None:
         """Validate mutual exclusivity and timezone-awareness.
@@ -228,6 +235,11 @@ class EntryOptions:
             ValueError: When both absolute fields are set, or when
                         absolute_expiration is a naive datetime (RISK-004).
         """
+        if isinstance(self.sliding_expiration, str):
+            self.sliding_expiration = parse_duration(self.sliding_expiration)
+        if isinstance(self.absolute_expiration_relative, str):
+            self.absolute_expiration_relative = parse_duration(self.absolute_expiration_relative)
+
         if self.absolute_expiration is not None and self.absolute_expiration_relative is not None:
             raise ValueError(
                 "'absolute_expiration' and 'absolute_expiration_relative' are "

@@ -118,6 +118,7 @@ class DatabaseOperations:
                             cur.execute(self._sql.create_schema)
                             cur.execute(self._sql.create_table)
                             cur.execute(self._sql.create_index)
+                            cur.execute(self._sql.create_tags_index)
                     self._table_created = True
                     logger.debug(
                         "Cache table '%s.%s' ensured.",
@@ -218,7 +219,7 @@ class DatabaseOperations:
                     with conn.cursor() as cur:
                         cur.execute(
                             self._sql.set_item,
-                            (key, value, expires_at, sliding_secs, abs_exp),
+                            (key, value, expires_at, sliding_secs, abs_exp, options.tags),
                         )
             except Exception:
                 logger.exception("set(%r) failed.", key)
@@ -268,6 +269,29 @@ class DatabaseOperations:
                         cur.execute(self._sql.remove_item, (key,))
             except Exception:
                 logger.exception("remove(%r) failed.", key)
+                raise
+
+    # ------------------------------------------------------------------
+    # delete_by_tags
+    # ------------------------------------------------------------------
+
+    def delete_by_tags(self, tags: list[str]) -> None:
+        """Physically delete all cache entries that contain the specified tags.
+
+        Args:
+            tags: List of tags to match.
+        """
+        if not tags:
+            return
+            
+        self.ensure_table_exists()
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.delete_by_tags, (tags,))
+            except Exception:
+                logger.exception("delete_by_tags(%r) failed.", tags)
                 raise
 
     # ------------------------------------------------------------------
@@ -375,7 +399,7 @@ class DatabaseOperations:
 
                         cur.execute(
                             self._sql.set_item,
-                            (key, value, expires_at, sliding_secs, abs_exp),
+                            (key, value, expires_at, sliding_secs, abs_exp, options.tags),
                         )
 
                     return value

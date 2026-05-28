@@ -30,6 +30,14 @@ with PostgresCache(options) as cache:
 # get_or_create with stampede protection (advisory lock)
 with PostgresCache(options) as cache:
     value = cache.get_or_create("my-key", lambda: b"computed-value")
+
+# Decorator API for synchronous functions
+with PostgresCache(options) as cache:
+    @cache.cached(key="user:{user_id}", ttl="10m", tags=["users"])
+    def get_user(user_id: int):
+        return {"id": user_id, "name": f"User {user_id}"}
+        
+    user = get_user(1) # Fetched and cached
 ```
 
 ## Configuration
@@ -44,17 +52,36 @@ options = PostgresCacheOptions(
     table="cache",
     create_if_not_exists=True,       # auto-create table on first use
     use_wal=False,                    # UNLOGGED table (faster, not crash-safe)
-    expiration_scan_frequency=timedelta(minutes=5),  # background scan interval
+    expiration_scan_interval=timedelta(minutes=5),  # background scan interval
     enable_expiration_scan=True,      # run background expiration scanner
 )
 
+# Use concise duration strings or standard timedeltas
 entry_opts = EntryOptions(
-    sliding_expiration=timedelta(minutes=20),
-    absolute_expiration_relative_to_now=timedelta(hours=1),
+    sliding_expiration="20m",
+    absolute_expiration_relative="1h",
+    tags=["org:123"]
 )
 
 with PostgresCache(options) as cache:
     cache.set("key", b"value", entry_opts)
+```
+
+## Tag-Based Invalidation
+
+You can assign tags to cache entries and later delete them in bulk. This is highly effective for invalidating complex relationship queries.
+
+```python
+with PostgresCache(options) as cache:
+    # Tag multiple entries
+    cache.set("product:1", b"data", EntryOptions(tags=["products", "category:electronics"]))
+    cache.set("product:2", b"data", EntryOptions(tags=["products", "category:home"]))
+    
+    # Invalidate all electronics instantly
+    cache.delete_tags("category:electronics")
+    
+    # Or invalidate all products
+    cache.delete_tags("products")
 ```
 
 ## Connection modes
