@@ -10,6 +10,7 @@ Spec: _reversa_sdd/migration/target_architecture.md § BC-1, DA-03, DA-04
 """
 
 import time
+import pickle
 import pytest
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
@@ -81,6 +82,84 @@ class TestKeyValidation:
 # ===========================================================================
 # Public API — delegates to DatabaseOperations
 # ===========================================================================
+
+class TestDecorators:
+    def test_cached_decorator(self):
+        cache, mock_db = make_cache()
+        mock_db.get_or_create.return_value = pickle.dumps({"id": 1})
+        
+        @cache.cached(key="user:{user_id}", ttl="10m")
+        def get_user(user_id: int):
+            return {"id": user_id}
+
+        result = get_user(user_id=1)
+        assert result == {"id": 1}
+        mock_db.get_or_create.assert_called_once()
+        args, kwargs = mock_db.get_or_create.call_args
+        assert args[0] == "user:1"
+
+    def test_failover_decorator_success(self):
+        cache, mock_db = make_cache()
+        mock_db.get_or_create.return_value = pickle.dumps("success")
+        
+        @cache.failover(key="test:{id}", ttl="10m", exceptions=(ValueError,))
+        def my_func(id: int):
+            return "success"
+            
+        result = my_func(id=1)
+        assert result == "success"
+        
+    def test_failover_decorator_exception(self):
+        cache, mock_db = make_cache()
+        # Mock get_stale to return a stale value
+        mock_db.get_stale.return_value = pickle.dumps("stale_data")
+        
+        @cache.failover(key="test:{id}", ttl="10m", exceptions=(ValueError,))
+        def my_func(id: int):
+            raise ValueError("Service down")
+            
+        # The factory passed to get_or_create should handle the exception and return stale data
+        # We need to simulate get_or_create calling the factory
+        def mock_goc(key, factory, options):
+            return factory()
+            
+        mock_db.get_or_create.side_effect = mock_goc
+        
+        result = my_func(id=1)
+        assert result == "stale_data"
+        mock_db.get_stale.assert_called_once_with("test:1")
+
+    def test_early_decorator_normal(self):
+        cache, mock_db = make_cache()
+        # Mock get_with_ttl returning None (cache miss)
+        mock_db.get_with_ttl.return_value = None
+        mock_db.get_or_create.return_value = pickle.dumps("fresh_data")
+        
+        @cache.early(key="early:{id}", ttl="10m", early_ttl="7m")
+        def my_func(id: int):
+            return "fresh_data"
+            
+        result = my_func(id=1)
+        assert result == "fresh_data"
+        mock_db.get_or_create.assert_called_once()
+
+    @patch("threading.Thread.start")
+    def test_early_decorator_early_refresh(self, mock_thread_start):
+        cache, mock_db = make_cache()
+        # Mock get_with_ttl returning a remaining TTL that is less than early_threshold
+        # ttl is 10m, early_ttl is 7m. early_threshold = 3m. remaining = 2m
+        mock_db.get_with_ttl.return_value = (pickle.dumps("old_data"), timedelta(minutes=2))
+        
+        @cache.early(key="early:{id}", ttl="10m", early_ttl="7m")
+        def my_func(id: int):
+            return "new_data"
+            
+        result = my_func(id=1)
+        # Should return old_data immediately
+        assert result == "old_data"
+        # Should have started a background thread (call count >= 1 due to other threads)
+        assert mock_thread_start.call_count >= 1
+
 
 class TestGet:
     def test_delegates_to_db(self):

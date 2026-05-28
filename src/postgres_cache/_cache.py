@@ -385,3 +385,112 @@ class PostgresCache:
 
             return wrapper
         return decorator
+
+    def failover(
+        self,
+        key: str,
+        ttl: str | timedelta | None = None,
+        exceptions: tuple[type[Exception], ...] = (Exception,),
+        tags: list[str] | None = None,
+    ) -> Callable:
+        """Decorator to return stale cache if the function raises an exception.
+        
+        Args:
+            key: Format string for the cache key.
+            ttl: Time-to-live for the cache entry.
+            exceptions: Tuple of exception types to catch and failover.
+            tags: Optional list of tags.
+        """
+        def decorator(func: Callable) -> Callable:
+            sig = inspect.signature(func)
+
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                bound_args = sig.bind(*args, **kwargs)
+                bound_args.apply_defaults()
+                resolved_key = key.format(**bound_args.arguments)
+                self._validate_key(resolved_key)
+
+                def factory() -> bytes:
+                    try:
+                        result = func(*args, **kwargs)
+                        return pickle.dumps(result)
+                    except exceptions as e:
+                        stale_bytes = self._db.get_stale(resolved_key)
+                        if stale_bytes is not None:
+                            logger.warning(
+                                "failover(%r): function raised %r, returning stale cache.",
+                                resolved_key, e
+                            )
+                            return stale_bytes
+                        raise
+
+                options = EntryOptions(sliding_expiration=ttl, tags=tags)
+                cached_bytes = self.get_or_create(resolved_key, factory, options)
+                return pickle.loads(cached_bytes)
+
+            return wrapper
+        return decorator
+
+    def early(
+        self,
+        key: str,
+        ttl: str | timedelta,
+        early_ttl: str | timedelta,
+        tags: list[str] | None = None,
+    ) -> Callable:
+        """Decorator to refresh cache in background before it expires.
+        
+        Args:
+            key: Format string for the cache key.
+            ttl: Total time-to-live for the cache entry.
+            early_ttl: Background refresh is triggered when the age of the cache exceeds this.
+            tags: Optional list of tags.
+        """
+        from ._utils import parse_duration
+        
+        parsed_ttl = parse_duration(ttl) if isinstance(ttl, str) else ttl
+        parsed_early_ttl = parse_duration(early_ttl) if isinstance(early_ttl, str) else early_ttl
+        
+        if parsed_ttl is None or parsed_early_ttl is None:
+            raise ValueError("early() requires both ttl and early_ttl")
+            
+        early_threshold = parsed_ttl - parsed_early_ttl
+
+        def decorator(func: Callable) -> Callable:
+            sig = inspect.signature(func)
+
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                bound_args = sig.bind(*args, **kwargs)
+                bound_args.apply_defaults()
+                resolved_key = key.format(**bound_args.arguments)
+                self._validate_key(resolved_key)
+
+                options = EntryOptions(sliding_expiration=ttl, tags=tags)
+
+                val_and_ttl = self._db.get_with_ttl(resolved_key)
+                if val_and_ttl is not None:
+                    val_bytes, remaining = val_and_ttl
+                    if remaining < early_threshold:
+                        # Spawns a background thread to update the cache
+                        def background_refresh():
+                            try:
+                                logger.debug("early(%r): background refreshing cache.", resolved_key)
+                                new_result = func(*args, **kwargs)
+                                self.set(resolved_key, pickle.dumps(new_result), options)
+                            except Exception:
+                                logger.exception("early(%r): background refresh failed.", resolved_key)
+                                
+                        threading.Thread(target=background_refresh, daemon=True).start()
+                    return pickle.loads(val_bytes)
+
+                def factory() -> bytes:
+                    result = func(*args, **kwargs)
+                    return pickle.dumps(result)
+
+                cached_bytes = self.get_or_create(resolved_key, factory, options)
+                return pickle.loads(cached_bytes)
+
+            return wrapper
+        return decorator

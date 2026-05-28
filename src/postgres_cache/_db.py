@@ -166,6 +166,48 @@ class DatabaseOperations:
                 logger.exception("get(%r) failed.", key)
                 raise
 
+    def get_stale(self, key: str) -> bytes | None:
+        """Retrieve a cached value regardless of its expiration status.
+
+        Returns:
+            bytes if found, None if completely absent.
+        """
+        self.ensure_table_exists()
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.get_stale_item, (key,))
+                        row = cur.fetchone()
+                return row[0] if row else None
+            except Exception:
+                logger.exception("get_stale(%r) failed.", key)
+                raise
+
+    def get_with_ttl(self, key: str) -> tuple[bytes, timedelta] | None:
+        """Retrieve a cached value and its remaining TTL.
+
+        Returns:
+            Tuple of (bytes, remaining timedelta) or None if absent/expired.
+        """
+        self.ensure_table_exists()
+        utc_now = datetime.now(tz=timezone.utc)
+        with self._get_connection() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor() as cur:
+                        cur.execute(self._sql.get_item_with_ttl, (utc_now, key, utc_now))
+                        row = cur.fetchone()
+                if row:
+                    val: bytes = row[0]
+                    expires_at: datetime = row[1]
+                    remaining = expires_at - utc_now
+                    return val, remaining
+                return None
+            except Exception:
+                logger.exception("get_with_ttl(%r) failed.", key)
+                raise
+
     # ------------------------------------------------------------------
     # set — BR-MIGRAR-003, BR-MIGRAR-007
     # ------------------------------------------------------------------

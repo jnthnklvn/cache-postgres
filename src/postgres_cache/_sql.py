@@ -114,6 +114,39 @@ class SqlQueries:
         )
 
         # ------------------------------------------------------------------
+        # get_item_with_ttl
+        #
+        # Retrieve value and its expiration time (for early cache refresh).
+        # Renews sliding expiration on read via UPDATE + RETURNING.
+        # Params: (utcNow, key, utcNow)
+        # ------------------------------------------------------------------
+        self.get_item_with_ttl: str = (
+            f"UPDATE {qualified}"
+            f" SET {COL_EXPIRES_AT} = CASE"
+            f"     WHEN {COL_SLIDING_SECONDS} IS NOT NULL"
+            f"     THEN LEAST("
+            f"         %s + ({COL_SLIDING_SECONDS} * INTERVAL '1 second'),"
+            f"         COALESCE({COL_ABSOLUTE_EXPIRATION}, 'infinity'::timestamptz)"
+            f"     )"
+            f"     ELSE {COL_EXPIRES_AT}"
+            f" END"
+            f" WHERE {COL_ID} = %s"
+            f"   AND {COL_EXPIRES_AT} >= %s"
+            f" RETURNING {COL_VALUE}, {COL_EXPIRES_AT};"
+        )
+
+        # ------------------------------------------------------------------
+        # get_stale_item
+        #
+        # Retrieve a value without checking expiration (for failover).
+        # Does not renew sliding expiration.
+        # Params: (key,)
+        # ------------------------------------------------------------------
+        self.get_stale_item: str = (
+            f"SELECT {COL_VALUE} FROM {qualified} WHERE {COL_ID} = %s;"
+        )
+
+        # ------------------------------------------------------------------
         # set — BR-MIGRAR-007 (UPSERT via CTE ON CONFLICT)
         #
         # Atomic upsert — no race between concurrent INSERT and UPDATE.

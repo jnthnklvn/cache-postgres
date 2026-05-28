@@ -116,6 +116,42 @@ results = cache.get_many(["key1", "key2", "missing_key"])
 cache.delete_many(["key1", "key2"])
 ```
 
+## Advanced Resiliency Decorators
+
+Postgres-Cache brings advanced patterns inspired by modern caching tools. Both synchronous (`PostgresCache`) and asynchronous (`AsyncPostgresCache`) facades support these decorators!
+
+### `@failover`
+
+Never fail a request just because a backend service goes down. The `@failover` decorator will catch specific exceptions and serve a **stale** cache entry (ignoring its expiration) if one is available.
+
+```python
+from postgres_cache import PostgresCache, PostgresCacheOptions
+import requests
+
+options = PostgresCacheOptions(...)
+cache = PostgresCache(options)
+
+@cache.failover("weather:{city}", ttl="1h", exceptions=(requests.RequestException,))
+def get_weather(city: str) -> dict:
+    # If this raises a RequestException, the cache will serve 
+    # the last known data for this city!
+    response = requests.get(f"https://weather.example.com/{city}")
+    response.raise_for_status()
+    return response.json()
+```
+
+### `@early`
+
+Eliminate cache stampedes by proactively refreshing hot keys *before* they expire. The `@early` decorator serves the cached data immediately while spawning a background task to refresh it.
+
+```python
+# The cache entry lives for 10 minutes, but if it is requested within the last 
+# 3 minutes of its life, it is refreshed in the background.
+@cache.early("expensive_data:{id}", ttl="10m", early_ttl="7m")
+def get_expensive_data(id: int) -> dict:
+    return compute_very_expensive_data(id)
+```
+
 ## Pattern Matching
 
 Emulate Redis-like wildcard operations using standard SQL `LIKE` syntax natively.
